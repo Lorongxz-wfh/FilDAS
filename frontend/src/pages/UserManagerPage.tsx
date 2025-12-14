@@ -1,0 +1,323 @@
+// src/pages/UserManagerPage.tsx
+import { useEffect, useState } from "react";
+import Modal from "../components/Modal";
+import { api } from "../lib/api";
+
+type UserFormMode = "create" | "edit";
+
+type User = {
+  id: number;
+  name: string;
+  email: string;
+  role: string;
+  status: "active" | "disabled";
+};
+
+type UserFormState = {
+  id?: number;
+  name: string;
+  email: string;
+  role: string;
+  status: "active" | "disabled";
+  password: string;
+};
+
+const EMPTY_FORM: UserFormState = {
+  name: "",
+  email: "",
+  role: "Staff",
+  status: "active",
+  password: "",
+};
+
+export default function UserManagerPage() {
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const [userModalOpen, setUserModalOpen] = useState(false);
+  const [userModalMode, setUserModalMode] = useState<UserFormMode>("create");
+  const [form, setForm] = useState<UserFormState>(EMPTY_FORM);
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // 1) load users from Laravel
+  const loadUsers = async () => {
+    setLoading(true);
+    try {
+      const res = await api.get<User[]>("/users");
+      setUsers(res.data);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadUsers();
+  }, []);
+
+  const openCreate = () => {
+    setUserModalMode("create");
+    setForm(EMPTY_FORM);
+    setErrorMsg(null);
+    setUserModalOpen(true);
+  };
+
+  const openEditWithUser = (user: User) => {
+    setUserModalMode("edit");
+    setForm({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      status: user.status,
+      password: "",
+    });
+    setErrorMsg(null);
+    setUserModalOpen(true);
+  };
+
+  const handleChange =
+    (field: keyof UserFormState) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+      setForm((prev) => ({ ...prev, [field]: e.target.value }));
+    };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setErrorMsg(null);
+
+    try {
+      if (userModalMode === "create") {
+        await api.post("/users", {
+          name: form.name,
+          email: form.email,
+          role: form.role,
+          status: form.status,
+          password: form.password,
+        });
+      } else {
+        await api.put(`/users/${form.id}`, {
+          name: form.name,
+          email: form.email,
+          role: form.role,
+          status: form.status,
+          ...(form.password ? { password: form.password } : {}),
+        });
+      }
+
+      await loadUsers(); // refresh table
+      setUserModalOpen(false);
+      setForm(EMPTY_FORM);
+    } catch (err) {
+      setErrorMsg("Could not save user. Please check the form and try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <>
+      <h1 className="text-2xl font-semibold mb-2 text-white">User Manager</h1>
+      {/* <p className="text-slate-300 text-sm mb-4">
+        Manage staff accounts, roles, and permissions for the archive.
+      </p> */}
+
+      {/* Toolbar */}
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex gap-2">
+          <button
+            className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-500"
+            onClick={openCreate}
+          >
+            + New user
+          </button>
+          <button className="rounded-md border border-slate-700 px-3 py-2 text-sm text-white hover:bg-slate-800">
+            Bulk actions
+          </button>
+        </div>
+
+        <div className="flex gap-2">
+          <input
+            className="rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            placeholder="Search users..."
+          />
+          <select className="rounded-md border border-slate-700 bg-slate-900/60 px-2 py-2 text-sm text-white focus:outline-none">
+            <option>All roles</option>
+            <option>QA Admin</option>
+            <option>Librarian</option>
+            <option>Staff</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Users table */}
+      <section className="rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-sm">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs font-semibold uppercase text-slate-400">
+            Users
+          </p>
+          <p className="text-xs text-slate-500">
+            {loading ? "Loading..." : `Showing ${users.length} user(s)`}
+          </p>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-left text-sm">
+            <thead className="border-b border-slate-800 text-xs uppercase text-slate-400">
+              <tr>
+                <th className="py-2 pr-4">Name</th>
+                <th className="py-2 pr-4">Email</th>
+                <th className="py-2 pr-4">Role</th>
+                <th className="py-2 pr-4">Status</th>
+                <th className="py-2 pr-4">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800">
+              {loading && (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="py-4 text-center text-slate-500 text-sm"
+                  >
+                    Loading users...
+                  </td>
+                </tr>
+              )}
+
+              {!loading &&
+                users.map((user) => (
+                  <tr key={user.id} className="hover:bg-slate-800/60">
+                    <td className="py-2 pr-4 text-white">{user.name}</td>
+                    <td className="py-2 pr-4 text-slate-400">{user.email}</td>
+                    <td className="py-2 pr-4">
+                      <span className="rounded-full bg-slate-500/20 px-2 py-0.5 text-xs text-slate-200">
+                        {user.role}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-4 text-emerald-400">
+                      {user.status === "active" ? "Active" : "Disabled"}
+                    </td>
+                    <td className="py-2 pr-4 space-x-2">
+                      <button
+                        className="text-xs text-sky-400 hover:underline"
+                        onClick={() => openEditWithUser(user)}
+                      >
+                        Edit
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+
+              {!loading && users.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="py-4 text-center text-slate-500 text-sm"
+                  >
+                    No users yet.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* New/Edit user modal */}
+      <Modal
+        open={userModalOpen}
+        title={userModalMode === "create" ? "Create new user" : "Edit user"}
+        onClose={() => setUserModalOpen(false)}
+      >
+        <form className="space-y-3 text-sm" onSubmit={handleSubmit}>
+          {errorMsg && (
+            <p className="text-xs text-rose-400 bg-rose-950/40 border border-rose-900 rounded px-2 py-1">
+              {errorMsg}
+            </p>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">
+                Full name
+              </label>
+              <input
+                className="w-full rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+                value={form.name}
+                onChange={handleChange("name")}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Email</label>
+              <input
+                type="email"
+                className="w-full rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+                value={form.email}
+                onChange={handleChange("email")}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Role</label>
+              <select
+                className="w-full rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-white focus:outline-none"
+                value={form.role}
+                onChange={handleChange("role")}
+              >
+                <option>QA Admin</option>
+                <option>Librarian</option>
+                <option>Staff</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">
+                Status
+              </label>
+              <select
+                className="w-full rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-white focus:outline-none"
+                value={form.status}
+                onChange={handleChange("status")}
+              >
+                <option value="active">Active</option>
+                <option value="disabled">Disabled</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">
+              Password (leave blank to keep current)
+            </label>
+            <input
+              type="password"
+              className="w-full rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+              value={form.password}
+              onChange={handleChange("password")}
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              className="rounded-md border border-slate-700 px-3 py-2 text-xs text-white hover:bg-slate-800"
+              onClick={() => setUserModalOpen(false)}
+              disabled={submitting}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="rounded-md bg-sky-600 px-3 py-2 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-60"
+              disabled={submitting}
+            >
+              {userModalMode === "create" ? "Create user" : "Save changes"}
+            </button>
+          </div>
+        </form>
+      </Modal>
+    </>
+  );
+}

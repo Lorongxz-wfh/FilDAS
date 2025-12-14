@@ -1,0 +1,68 @@
+// src/components/Sidebar.tsx
+import type { PageKey } from "../types/navigation";
+import { Button } from "./ui/Button";
+
+type SidebarProps = {
+  activePage: PageKey;
+  onNavigate: (page: PageKey) => void;
+};
+
+export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
+  const itemVariant = (active: boolean) =>
+    active ? "primary" : ("ghost" as const);
+
+  return (
+    <aside className="w-60 h-full border-r border-slate-800 bg-slate-950/60 px-3 py-4 flex flex-col">
+      <p className="mb-3 px-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+        Admin
+      </p>
+
+      <nav className="space-y-1">
+        <Button
+          variant={itemVariant(activePage === "overview")}
+          size="sm"
+          className="w-full justify-start"
+          onClick={() => onNavigate("overview")}
+        >
+          Dashboard
+        </Button>
+
+        <Button
+          variant={itemVariant(activePage === "files")}
+          size="sm"
+          className="w-full justify-start"
+          onClick={() => onNavigate("files")}
+        >
+          Document Manager
+        </Button>
+
+        <Button
+          variant={itemVariant(activePage === "shared")}
+          size="sm"
+          className="w-full justify-start"
+          onClick={() => onNavigate("shared")}
+        >
+          Shared Files
+        </Button>
+
+        <Button
+          variant={itemVariant(activePage === "users")}
+          size="sm"
+          className="w-full justify-start"
+          onClick={() => onNavigate("users")}
+        >
+          User Manager
+        </Button>
+
+        <Button
+          variant={itemVariant(activePage === "trash")}
+          size="sm"
+          className="w-full justify-start"
+          onClick={() => onNavigate("trash")}
+        >
+          Archive / Trash
+        </Button>
+      </nav>
+    </aside>
+  );
+}
