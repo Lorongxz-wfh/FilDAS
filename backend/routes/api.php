@@ -18,8 +18,11 @@ Route::get('/ping', function () {
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/register', [RegisteredUserController::class, 'store']);
 
-// Public preview route (read-only)
-Route::get('/documents/{document}/stream', [DocumentController::class, 'stream']);
+// Public preview/stream routes (read-only, no auth required)
+Route::get('/documents/{document}/stream', [DocumentController::class, 'stream'])
+    ->name('documents.stream');
+Route::get('/documents/{document}/preview', [DocumentController::class, 'preview'])
+    ->name('documents.preview');
 
 // Protected routes (Bearer token via Sanctum)
 Route::middleware(['auth:sanctum'])->group(function () {
@@ -42,6 +45,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/departments', [DepartmentController::class, 'store']);
     Route::get('/departments/{department}', [DepartmentController::class, 'show']);
     Route::put('/departments/{department}', [DepartmentController::class, 'update']);
+    Route::patch('/departments/{department}', [DepartmentController::class, 'update']);
     Route::delete('/departments/{department}', [DepartmentController::class, 'destroy']);
 
     // Folders
@@ -49,14 +53,19 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/folders', [FolderController::class, 'store']);
     Route::get('/folders/{folder}', [FolderController::class, 'show']);
     Route::put('/folders/{folder}', [FolderController::class, 'update']);
+    Route::patch('/folders/{folder}', [FolderController::class, 'update']);
     Route::delete('/folders/{folder}', [FolderController::class, 'destroy']);
 
-    // Documents
+    // Documents (full CRUD)
     Route::get('/documents', [DocumentController::class, 'index']);
     Route::post('/documents', [DocumentController::class, 'store']);
     Route::get('/documents/{document}', [DocumentController::class, 'show']);
     Route::put('/documents/{document}', [DocumentController::class, 'update']);
+    Route::patch('/documents/{document}', [DocumentController::class, 'update']);
     Route::delete('/documents/{document}', [DocumentController::class, 'destroy']);
-    Route::get('/documents/{document}/download', [DocumentController::class, 'download']);
+
+    // Document actions (protected)
+    Route::get('/documents/{document}/download', [DocumentController::class, 'download'])
+        ->name('documents.download');
     Route::get('/documents/statistics/summary', [DocumentController::class, 'statistics']);
 });

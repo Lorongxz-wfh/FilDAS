@@ -25,6 +25,10 @@ type FolderRow = {
   department_id: number | null;
 };
 
+type DocumentPreview = DocumentRow & {
+  stream_url: string;
+};
+
 type Department = {
   id: number;
   name: string;
@@ -204,6 +208,8 @@ export default function DocumentManagerPage() {
   const [newFolderName, setNewFolderName] = useState("");
   const [folderError, setFolderError] = useState<string | null>(null);
 
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameName, setRenameName] = useState("");
   const [renaming, setRenaming] = useState(false);
@@ -223,20 +229,44 @@ export default function DocumentManagerPage() {
         const storedDeptId = localStorage.getItem("fildas.currentDepartmentId");
         const storedFolderId = localStorage.getItem("fildas.currentFolderId");
 
-        if (storedDeptId) {
-          const deptIdNum = Number(storedDeptId);
-          const dept = deptItems.find((d) => d.id === deptIdNum);
-          if (dept) {
-            await loadDepartmentContents(dept);
+        // No stored department → Departments root
+        if (!storedDeptId) {
+          setCurrentDepartment(null);
+          setCurrentFolder(null);
+          setSelectedItem(null);
+          return;
+        }
 
-            if (storedFolderId) {
-              const folderIdNum = Number(storedFolderId);
-              const folder = folders.find((f) => f.id === folderIdNum);
-              if (folder) {
-                await loadFolderContents(folder);
-              }
-            }
-          }
+        const deptId = Number(storedDeptId);
+        const dept = deptItems.find((d) => d.id === deptId);
+        if (!dept) {
+          localStorage.removeItem("fildas.currentDepartmentId");
+          localStorage.removeItem("fildas.currentFolderId");
+          setCurrentDepartment(null);
+          setCurrentFolder(null);
+          setSelectedItem(null);
+          return;
+        }
+
+        // If no folder stored, just load department root
+        if (!storedFolderId) {
+          await loadDepartmentContents(dept);
+          return;
+        }
+
+        // Folder id stored: fetch that folder and then load it
+        const folderId = Number(storedFolderId);
+        try {
+          const folderRes = await api.get<FolderRow>(`/folders/${folderId}`);
+          const folder = folderRes.data;
+
+          // Ensure we are in the right department
+          await loadDepartmentContents(dept);
+          await loadFolderContents(folder);
+        } catch (e) {
+          console.error("Failed to restore folder, falling back to dept root", e);
+          localStorage.removeItem("fildas.currentFolderId");
+          await loadDepartmentContents(dept);
         }
       } catch (e) {
         console.error(e);
@@ -245,9 +275,12 @@ export default function DocumentManagerPage() {
         setLoading(false);
       }
     };
+
     loadInitial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+
 
   const loadDepartmentContents = async (dept: Department) => {
     localStorage.setItem("fildas.currentDepartmentId", String(dept.id));
@@ -258,15 +291,30 @@ export default function DocumentManagerPage() {
     setCurrentDepartment(dept);
     setCurrentFolder(null);
     setSelectedItem({ kind: "department", data: dept });
+
     try {
       const [folderRes, docRes] = await Promise.all([
-        api.get("/folders", { params: { department_id: dept.id } }),
-        api.get("/documents", { params: { department_id: dept.id } }),
+        api.get("/folders", {
+          params: { department_id: dept.id, parent_id: null },
+        }),
+        api.get("/documents", {
+          params: { department_id: dept.id, folder_id: null },
+        }),
       ]);
       const fs: FolderRow[] = folderRes.data.data ?? folderRes.data;
       const docs: DocumentRow[] = docRes.data.data ?? docRes.data;
-      setFolders(fs);
-      setDocuments(docs);
+      setFolders((prev) => {
+        // replace or merge by department, your choice; simplest:
+        return [...prev.filter((f) => f.department_id !== dept.id), ...fs];
+      });
+      setDocuments((prev) => {
+        return [
+          ...prev.filter(
+            (d) => d.department_id !== dept.id || d.folder_id !== null
+          ),
+          ...docs,
+        ];
+      });
     } catch (e) {
       console.error(e);
       setError("Failed to load department contents.");
@@ -286,6 +334,7 @@ export default function DocumentManagerPage() {
     setError(null);
     setCurrentFolder(folder);
     setSelectedItem({ kind: "folder", data: folder });
+
     try {
       const [folderRes, docRes] = await Promise.all([
         api.get("/folders", {
@@ -297,6 +346,7 @@ export default function DocumentManagerPage() {
       ]);
       const childFolders: FolderRow[] = folderRes.data.data ?? folderRes.data;
       const docs: DocumentRow[] = docRes.data.data ?? docRes.data;
+
       setFolders((prev) => {
         const existingIds = new Set(prev.map((f) => f.id));
         const merged = [...prev];
@@ -305,6 +355,7 @@ export default function DocumentManagerPage() {
         });
         return merged;
       });
+
       setDocuments((prev) => {
         const others = prev.filter((d) => d.folder_id !== folder.id);
         return [...others, ...docs];
@@ -338,12 +389,14 @@ export default function DocumentManagerPage() {
         localStorage.removeItem("fildas.currentFolderId");
       }
     } else if (currentDepartment) {
+      // Back to Departments root
       setCurrentDepartment(null);
       setSelectedItem(null);
       localStorage.removeItem("fildas.currentDepartmentId");
       localStorage.removeItem("fildas.currentFolderId");
     }
   };
+
 
   const handleDeleteSelected = async () => {
     if (!selectedItem) return;
@@ -444,11 +497,48 @@ export default function DocumentManagerPage() {
     return `${value.toFixed(1)} ${units[i]}`;
   };
 
-  const getPreviewUrl = (doc: DocumentRow) => {
-    const base = api.defaults.baseURL || "";
-    const apiBase = base.endsWith("/api") ? base.slice(0, -4) : base;
-    return `${apiBase}/api/documents/${doc.id}/stream`;
+  const getPreviewUrlFromApi = async (docId: number) => {
+    const res = await api.get<DocumentPreview>(`/documents/${docId}/preview`);
+    return res.data.stream_url;
   };
+
+  // load preview URL when a file is selected and details panel is open
+  useEffect(() => {
+    const loadPreview = async () => {
+      if (!detailsOpen || !selectedItem || selectedItem.kind !== "file") {
+        setPreviewUrl(null);
+        return;
+      }
+
+      const doc = selectedItem.data as DocumentRow;
+      const mime = doc.mime_type || "";
+
+      // Allow preview for images, PDFs, and Word docs (doc/docx)
+      if (
+        !mime.startsWith("image/") &&
+        mime !== "application/pdf" &&
+        mime !==
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document" &&
+        mime !== "application/msword"
+      ) {
+        setPreviewUrl(null);
+        return;
+      }
+
+      try {
+        const url = await getPreviewUrlFromApi(doc.id);
+        setPreviewUrl(url);
+      } catch (e) {
+        console.error("Failed to load preview URL", e);
+        setPreviewUrl(null);
+      }
+    };
+
+    loadPreview();
+  }, [detailsOpen, selectedItem]);
+
+
+
 
   // ---------- actions: upload / new folder ----------
 
@@ -1053,13 +1143,21 @@ export default function DocumentManagerPage() {
                   {(selectedItem.data as DocumentRow).mime_type} •{" "}
                   {formatSize((selectedItem.data as DocumentRow).size_bytes)}
                 </p>
+
                 <div className="mb-3 h-40 rounded-md border border-slate-800 bg-slate-950/60 overflow-hidden">
-                  <iframe
-                    src={getPreviewUrl(selectedItem.data as DocumentRow)}
-                    className="h-full w-full"
-                    title="Preview"
-                  />
+                  {previewUrl ? (
+                    <iframe
+                      src={previewUrl}
+                      className="h-full w-full"
+                      title="Preview"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-[11px] text-slate-500">
+                      No preview available
+                    </div>
+                  )}
                 </div>
+
                 <p className="mb-1 text-[11px] font-semibold uppercase text-slate-400">
                   Activity
                 </p>

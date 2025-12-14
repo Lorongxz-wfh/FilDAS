@@ -1,155 +1,128 @@
 <?php
-// app/Http/Controllers/DocumentController.php
 
 namespace App\Http\Controllers;
 
 use App\Models\Document;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
 
 class DocumentController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Document::query();
+        $query = Document::with(['folder', 'uploadedBy']);
 
-        if ($request->filled('department_id')) {
+        // Filter by department if provided
+        if ($request->has('department_id')) {
             $query->where('department_id', $request->department_id);
         }
 
-        if ($request->filled('folder_id')) {
+        // Filter by folder if provided
+        if ($request->has('folder_id')) {
             $query->where('folder_id', $request->folder_id);
         }
 
-        if ($request->filled('search')) {
+        // Search by title, description, or original filename
+        if ($request->has('search')) {
             $search = $request->search;
             $query->where(function ($q) use ($search) {
                 $q->where('title', 'like', "%{$search}%")
+                    ->orWhere('description', 'like', "%{$search}%")
                     ->orWhere('original_filename', 'like', "%{$search}%");
             });
         }
 
-        $documents = $query->orderByDesc('uploaded_at')->get();
+        // Sort by uploaded_at by default
+        $sortBy = $request->get('sort_by', 'uploaded_at');
+        $sortOrder = $request->get('sort_order', 'desc');
+        $query->orderBy($sortBy, $sortOrder);
+
+        $documents = $query->paginate($request->get('per_page', 15));
 
         return response()->json($documents);
     }
 
+
+
     public function store(Request $request)
     {
-        $request->validate([
-            'title'         => 'required|string|max:255',
-            'description'   => 'nullable|string',
-            'department_id' => 'required|exists:departments,id',
-            'file'          => 'required|file|max:51200',
-            'folder_id'     => 'nullable|exists:folders,id',
+        $validated = $request->validate([
+            'title'       => 'required|string|max:255',
+            'description' => 'nullable|string',
+            'folder_id'   => 'required|exists:folders,id',
+            'file'        => 'required|file|max:51200', // 50MB max
         ]);
 
         if (!$request->hasFile('file')) {
-            return response()->json([
-                'message' => 'No file uploaded',
-            ], 400);
+            return response()->json(['error' => 'No file uploaded'], 400);
         }
 
         $file = $request->file('file');
+        $disk = Storage::disk('fildas_docs');
 
-        $originalName = $file->getClientOriginalName();
-        $extension    = $file->getClientOriginalExtension();
-        $filename     = Str::slug(pathinfo($originalName, PATHINFO_FILENAME))
-            . '-' . time()
-            . '.' . $extension;
+        $originalName   = $file->getClientOriginalName();
+        $extension      = $file->getClientOriginalExtension();
+        $filename       = pathinfo($originalName, PATHINFO_FILENAME);
+        $uniqueFilename = $filename . '_' . time() . '.' . $extension;
 
-        // store in Windows folder via fildas_docs disk
-        $path = $file->storeAs('documents', $filename, 'fildas_docs');
+        $path = $file->storeAs('', $uniqueFilename, 'fildas_docs');
+        if (!$path) {
+            return response()->json(['error' => 'Failed to store file'], 500);
+        }
+
+        $folder = \App\Models\Folder::findOrFail($validated['folder_id']);
 
         $document = Document::create([
-            'title'             => $request->title,
-            'description'       => $request->description,
+            'title'             => $validated['title'],
+            'description'       => $validated['description'] ?? null,
+            'folder_id'         => $validated['folder_id'],
+            'department_id'     => $folder->department_id,
+            'document_type_id'  => 1, // <-- set a valid default type ID here
             'file_path'         => $path,
             'original_filename' => $originalName,
-            'mime_type'         => $file->getMimeType(),
             'size_bytes'        => $file->getSize(),
-            'department_id'     => $request->department_id,
-            'uploaded_by'       => Auth::id(),
+            'mime_type'         => $file->getMimeType(),
+            'uploaded_by'       => auth()->id(),
             'uploaded_at'       => now(),
-            'document_type_id'  => 1,
-            'folder_id'         => $request->folder_id,
         ]);
 
-        return response()->json([
-            'message'  => 'Document uploaded successfully',
-            'document' => $document->load(['department', 'uploader']),
-        ], 201);
+        return response()->json($document->load(['folder', 'uploadedBy']), 201);
     }
+
+
 
     public function show(Document $document)
     {
-        return response()->json($document->load(['department', 'uploader']));
+        return response()->json($document->load(['folder', 'uploadedBy']));
     }
 
     public function update(Request $request, Document $document)
     {
-        $request->validate([
-            'title'         => 'sometimes|required|string|max:255',
-            'description'   => 'nullable|string',
-            'department_id' => 'sometimes|required|exists:departments,id',
-            'folder_id'     => 'nullable|exists:folders,id',
+        $validated = $request->validate([
+            'title' => 'sometimes|string|max:255',
+            'description' => 'nullable|string',
+            'folder_id' => 'sometimes|exists:folders,id',
         ]);
 
-        $document->update($request->only(['title', 'description', 'department_id', 'folder_id']));
+        $document->update($validated);
 
-        return response()->json([
-            'message'  => 'Document updated successfully',
-            'document' => $document->load(['department', 'uploader']),
-        ]);
-    }
-
-    public function download(Document $document)
-    {
-        $disk = Storage::disk('fildas_docs');
-
-        if (!$disk->exists($document->file_path)) {
-            return response()->json([
-                'message' => 'File not found',
-            ], 404);
-        }
-
-        $absolutePath = $disk->path($document->file_path);
-
-        return response()->download($absolutePath, $document->original_filename);
+        return response()->json($document->load(['folder', 'uploadedBy']));
     }
 
     public function destroy(Document $document)
     {
         $disk = Storage::disk('fildas_docs');
 
-        if ($disk->exists($document->file_path)) {
+        // Delete physical file
+        if ($document->file_path && $disk->exists($document->file_path)) {
             $disk->delete($document->file_path);
         }
 
-        $document->delete(); // soft delete row
+        // Delete database record
+        $document->delete();
 
-        return response()->json([
-            'message' => 'Document deleted successfully',
-        ]);
-    }
-
-    public function statistics()
-    {
-        $totalDocuments  = Document::count();
-        $totalSize       = Document::sum('size_bytes');
-        $departmentStats = Document::selectRaw('department_id, count(*) as count, sum(size_bytes) as total_size')
-            ->groupBy('department_id')
-            ->with('department:id,name')
-            ->get();
-
-        return response()->json([
-            'total_documents'      => $totalDocuments,
-            'total_size_bytes'     => $totalSize,
-            'total_size_formatted' => $this->formatBytes($totalSize),
-            'by_department'        => $departmentStats,
-        ]);
+        return response()->json(['message' => 'Document deleted successfully']);
     }
 
     public function stream(Document $document)
@@ -157,36 +130,156 @@ class DocumentController extends Controller
         $disk = Storage::disk('fildas_docs');
         $path = $document->file_path;
 
+        // sanitize
+        $path = str_replace(['../', '..\\'], '', $path);
+
         if (!$path || !$disk->exists($path)) {
-            abort(404);
+            abort(404, 'Document file not found');
         }
 
-        $absolutePath = $disk->path($path);
+        $fullPath = $disk->path($path);
 
-        // Use PHP's mime_content_type instead of $disk->mimeType()
-        $mime = mime_content_type($absolutePath) ?: 'application/octet-stream';
+        // Get mime type
+        $mimeType = $document->mime_type ?? mime_content_type($fullPath) ?? 'application/octet-stream';
 
-        if (str_starts_with($mime, 'image/') || $mime === 'application/pdf') {
-            return response()->file($absolutePath, [
-                'Content-Type'        => $mime,
+        // 1) If already PDF or image -> stream inline
+        if (str_starts_with($mimeType, 'image/') || $mimeType === 'application/pdf') {
+            return response()->file($fullPath, [
+                'Content-Type'        => $mimeType,
                 'Content-Disposition' => 'inline; filename="' . $document->original_filename . '"',
             ]);
         }
 
-        return response()->download($absolutePath, $document->original_filename);
+        // 2) If DOC/DOCX/etc -> convert to PDF once, then stream that
+        if (
+            $mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || // docx
+            $mimeType === 'application/msword'                                                          // doc
+        ) {
+            // if we already have a preview PDF, reuse it
+            if ($document->preview_path && $disk->exists($document->preview_path)) {
+                $previewFullPath = $disk->path($document->preview_path);
+
+                return response()->file($previewFullPath, [
+                    'Content-Type'        => 'application/pdf',
+                    'Content-Disposition' => 'inline; filename="' . pathinfo($document->original_filename, PATHINFO_FILENAME) . '.pdf"',
+                ]);
+            }
+
+            // else generate preview
+            $previewRelPath = $this->convertDocxToPdf($disk, $fullPath);
+            if (!$previewRelPath || !$disk->exists($previewRelPath)) {
+                abort(500, 'Failed to generate preview PDF');
+            }
+
+            // save path on document for next time
+            $document->preview_path = $previewRelPath;
+            $document->save();
+
+            $previewFullPath = $disk->path($previewRelPath);
+
+            return response()->file($previewFullPath, [
+                'Content-Type'        => 'application/pdf',
+                'Content-Disposition' => 'inline; filename="' . pathinfo($document->original_filename, PATHINFO_FILENAME) . '.pdf"',
+            ]);
+        }
+
+        // 3) everything else: normal download
+        return response()->download($fullPath, $document->original_filename);
+    }
+
+    /**
+     * Convert a DOC/DOCX file to PDF via LibreOffice and return
+     * the relative path (inside fildas_docs disk) to the PDF.
+     */
+    protected function convertDocxToPdf($disk, string $fullInputPath): ?string
+    {
+        // disk root, e.g. C:\...\Documents Database
+        $root = config('filesystems.disks.fildas_docs.root');
+
+        // create previews/ directory under root
+        $outputDir = $root . DIRECTORY_SEPARATOR . 'previews';
+        if (!is_dir($outputDir)) {
+            mkdir($outputDir, 0775, true);
+        }
+
+        // LibreOffice executable path (adjust if different)
+        $soffice = '"C:\Program Files\LibreOffice\program\soffice.exe"';
+
+        // run LibreOffice in headless mode
+        $cmd = $soffice
+            . ' --headless --convert-to pdf --outdir '
+            . escapeshellarg($outputDir) . ' '
+            . escapeshellarg($fullInputPath);
+
+        exec($cmd, $output, $exitCode);
+
+        if ($exitCode !== 0) {
+            Log::error('LibreOffice conversion failed', [
+                'cmd'       => $cmd,
+                'exit_code' => $exitCode,
+                'output'    => $output,
+            ]);
+            return null;
+        }
+
+        // LibreOffice writes PDF with same base filename in $outputDir
+        $baseName = pathinfo($fullInputPath, PATHINFO_FILENAME) . '.pdf';
+        $pdfFullPath = $outputDir . DIRECTORY_SEPARATOR . $baseName;
+
+        if (!file_exists($pdfFullPath)) {
+            Log::error('Converted PDF not found', ['pdf' => $pdfFullPath]);
+            return null;
+        }
+
+        // return relative path for Storage disk, e.g. "previews/file.pdf"
+        return 'previews' . DIRECTORY_SEPARATOR . $baseName;
     }
 
 
-    private function formatBytes($bytes)
+    public function preview(Document $document)
     {
-        $units = ['B', 'KB', 'MB', 'GB'];
+        // Preview returns metadata + stream URL
+        return response()->json([
+            'id' => $document->id,
+            'title' => $document->title,
+            'description' => $document->description,
+            'original_filename' => $document->original_filename,
+            'mime_type' => $document->mime_type,
+            'file_size' => $document->file_size,
+            'stream_url' => route('documents.stream', $document),
+            'created_at' => $document->created_at,
+            'updated_at' => $document->updated_at,
+        ]);
+    }
 
-        $i = 0;
-        while ($bytes > 1024 && $i < count($units) - 1) {
-            $bytes /= 1024;
-            $i++;
+    public function download(Document $document)
+    {
+        $disk = Storage::disk('fildas_docs');
+        $path = $document->file_path;
+
+        if (!$path || !$disk->exists($path)) {
+            abort(404, 'Document file not found');
         }
 
-        return round($bytes, 2) . ' ' . $units[$i];
+        $fullPath = $disk->path($path);
+
+        return response()->download($fullPath, $document->original_filename);
+    }
+
+    public function statistics()
+    {
+        $stats = [
+            'total_documents' => Document::count(),
+            'total_size' => Document::sum('file_size'),
+            'documents_by_type' => Document::selectRaw('mime_type, COUNT(*) as count')
+                ->groupBy('mime_type')
+                ->get(),
+            'recent_uploads' => Document::with('uploadedBy')
+                ->latest()
+                ->take(5)
+                ->get(),
+        ];
+
+        return response()->json($stats);
     }
 }

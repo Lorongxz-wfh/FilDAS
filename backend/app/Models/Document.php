@@ -15,6 +15,7 @@ class Document extends Model
         'title',
         'description',
         'file_path',
+        'preview_path',
         'original_filename',
         'mime_type',
         'size_bytes',
@@ -22,7 +23,7 @@ class Document extends Model
         'uploaded_by',
         'uploaded_at',
         'document_type_id',
-        'folder_id', // make sure this exists in your add_folder_id_to_documents_table migration
+        'folder_id',
     ];
 
     protected $casts = [
@@ -37,7 +38,8 @@ class Document extends Model
         return $this->belongsTo(Department::class);
     }
 
-    public function uploader()
+    // renamed to match with() call: uploadedBy
+    public function uploadedBy()
     {
         return $this->belongsTo(User::class, 'uploaded_by');
     }

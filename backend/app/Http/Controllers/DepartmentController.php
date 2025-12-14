@@ -1,5 +1,4 @@
 <?php
-// app/Http/Controllers/DepartmentController.php
 
 namespace App\Http\Controllers;
 
@@ -8,55 +7,44 @@ use Illuminate\Http\Request;
 
 class DepartmentController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        $departments = Department::withCount('documents')->get();
-        return response()->json($departments);
+        $departments = Department::all();
+        return response()->json(['data' => $departments]);
     }
 
     public function store(Request $request)
     {
-        $request->validate([
-            'name'        => 'required|string|max:255',
-            'code'        => 'required|string|max:50|unique:departments',
-            'description' => 'nullable|string',
+        $validated = $request->validate([
+            'name' => 'required|string|unique:departments',
         ]);
 
-        $department = Department::create($request->only(['name', 'code', 'description']));
-
-        return response()->json([
-            'message'    => 'Department created successfully',
-            'department' => $department,
-        ], 201);
+        $department = Department::create($validated);
+        return response()->json(['department' => $department], 201);
     }
 
-    public function show(Department $department)
+    public function show($id)
     {
-        return response()->json($department->loadCount('documents'));
+        $department = Department::findOrFail($id);
+        return response()->json(['department' => $department]);
     }
 
-    public function update(Request $request, Department $department)
+    public function update(Request $request, $id)
     {
-        $request->validate([
-            'name'        => 'sometimes|required|string|max:255',
-            'code'        => 'sometimes|required|string|max:50|unique:departments,code,' . $department->id,
-            'description' => 'nullable|string',
+        $department = Department::findOrFail($id);
+
+        $validated = $request->validate([
+            'name' => 'required|string|unique:departments,name,' . $id,
         ]);
 
-        $department->update($request->only(['name', 'code', 'description']));
-
-        return response()->json([
-            'message'    => 'Department updated successfully',
-            'department' => $department,
-        ]);
+        $department->update($validated);
+        return response()->json(['department' => $department]);
     }
 
-    public function destroy(Department $department)
+    public function destroy($id)
     {
-        $department->delete(); // soft delete
-
-        return response()->json([
-            'message' => 'Department deleted successfully',
-        ]);
+        $department = Department::findOrFail($id);
+        $department->delete();
+        return response()->json(['message' => 'Department deleted']);
     }
 }
