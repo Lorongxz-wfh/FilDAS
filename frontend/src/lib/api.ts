@@ -13,3 +13,9 @@ export function setAuthToken(token: string | null) {
     delete api.defaults.headers.common["Authorization"];
   }
 }
+
+// NEW: load token from localStorage on startup
+const saved = localStorage.getItem("fildas_token");
+if (saved) {
+  setAuthToken(saved);
+}

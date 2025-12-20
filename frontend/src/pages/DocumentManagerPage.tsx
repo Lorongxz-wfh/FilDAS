@@ -1,47 +1,35 @@
 // src/pages/DocumentManagerPage.tsx
 import { useEffect, useState } from "react";
-import Modal from "../components/Modal";
+import { useOutletContext } from "react-router-dom";
 import { api } from "../lib/api";
 import { Button } from "../components/ui/Button";
-import { IconButton } from "../components/ui/IconButton";
-import { Card } from "../components/ui/Card";
-import { DropdownMenu } from "../components/ui/DropdownMenu";
 
-type DocumentRow = {
-  id: number;
-  title: string;
-  original_filename: string;
-  mime_type: string;
-  size_bytes: number;
-  uploaded_at: string;
-  folder_id?: number | null;
-  department_id?: number | null;
+type LayoutContext = {
+  user: {
+    id: number;
+    name: string;
+    email: string;
+    department_id: number | null;
+    role?: { id: number; name: string } | null;
+  };
+  isAdmin: boolean;
 };
 
-type FolderRow = {
-  id: number;
-  name: string;
-  parent_id: number | null;
-  department_id: number | null;
-};
-
-type DocumentPreview = DocumentRow & {
-  stream_url: string;
-};
-
-type Department = {
-  id: number;
-  name: string;
-};
-
-type ViewMode = "grid" | "list";
-
-type SortMode = "alpha" | "recent" | "size" | "uploaded_at";
-
-type Item =
-  | { kind: "department"; data: Department }
-  | { kind: "folder"; data: FolderRow }
-  | { kind: "file"; data: DocumentRow };
+import type {
+  DocumentRow,
+  FolderRow,
+  DocumentPreview,
+  Department,
+  ViewMode,
+  SortMode,
+  Item,
+} from "../types/documents";
+import { DocumentGrid } from "../components/documents/DocumentGrid";
+import { DocumentList } from "../components/documents/DocumentList";
+import { DetailsPanel } from "../components/documents/DetailsPanel";
+import { DocumentUploadModal } from "../components/documents/DocumentUploadModal";
+import { NewFolderModal } from "../components/documents/NewFolderModal";
+import { RenameModal } from "../components/documents/RenameModal";
 
 const Loader = () => (
   <div className="flex h-full items-center justify-center py-10">
@@ -64,11 +52,9 @@ function applySort(items: Item[], sortMode: SortMode): Item[] {
     return nameA.localeCompare(nameB);
   };
 
-  if (sortMode === "alpha") {
-    return items.sort(alphaSort);
-  }
+  if (sortMode === "alpha") return [...items].sort(alphaSort);
 
-  if (sortMode === "recent" || sortMode === "uploaded_at") {
+  if (sortMode === "uploaded_at") {
     const foldersOnly = items.filter((i) => i.kind === "folder");
     const filesOnly = items
       .filter((i) => i.kind === "file")
@@ -78,6 +64,27 @@ function applySort(items: Item[], sortMode: SortMode): Item[] {
           new Date((a.data as DocumentRow).uploaded_at).getTime()
       );
     return [...foldersOnly, ...filesOnly];
+  }
+
+  if (sortMode === "recent") {
+    return [...items].sort((a, b) => {
+      const getOpened = (item: Item) => {
+        if (item.kind === "file") {
+          return (item.data as DocumentRow).last_opened_at;
+        }
+        if (item.kind === "folder") {
+          return (item.data as FolderRow).last_opened_at;
+        }
+        return (item.data as Department).last_opened_at;
+      };
+      const aTime = getOpened(a)
+        ? new Date(getOpened(a) as string).getTime()
+        : 0;
+      const bTime = getOpened(b)
+        ? new Date(getOpened(b) as string).getTime()
+        : 0;
+      return bTime - aTime;
+    });
   }
 
   if (sortMode === "size") {
@@ -103,6 +110,7 @@ function computeVisibleItems(params: {
   documents: DocumentRow[];
   sortMode: SortMode;
   searchQuery: string;
+  isAdmin: boolean;
 }): Item[] {
   const {
     currentDepartment,
@@ -112,10 +120,18 @@ function computeVisibleItems(params: {
     documents,
     sortMode,
     searchQuery,
+    isAdmin,
   } = params;
 
   if (!currentDepartment) {
-    let list = departments.map<Item>((d) => ({ kind: "department", data: d }));
+    if (!isAdmin) {
+      return [];
+    }
+
+    let list = departments.map<Item>((d) => ({
+      kind: "department",
+      data: d,
+    }));
     if (sortMode === "alpha") {
       list = list.sort((a, b) =>
         (a.data as Department).name.localeCompare((b.data as Department).name)
@@ -124,7 +140,6 @@ function computeVisibleItems(params: {
     return list;
   }
 
-  // 1) base items for CURRENT FOLDER (for normal browsing)
   const directFolders = folders.filter(
     (f) =>
       f.department_id === currentDepartment.id &&
@@ -141,15 +156,9 @@ function computeVisibleItems(params: {
     ...directFiles.map<Item>((d) => ({ kind: "file", data: d })),
   ];
 
-  // apply search on name
   const q = searchQuery.trim().toLowerCase();
+  if (!q) return applySort(items, sortMode);
 
-  if (!q) {
-    // no search: behave like before (only current folder)
-    return applySort(items, sortMode);
-  }
-
-  // 2) with search: use ALL folders/files in this department
   const allDeptFolders = folders.filter(
     (f) => f.department_id === currentDepartment.id
   );
@@ -176,17 +185,16 @@ function computeVisibleItems(params: {
 }
 
 export default function DocumentManagerPage() {
+  const { user, isAdmin } = useOutletContext<LayoutContext>();
   const [departments, setDepartments] = useState<Department[]>([]);
   const [folders, setFolders] = useState<FolderRow[]>([]);
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
 
-  const [currentDepartment, setCurrentDepartment] = useState<Department | null>(
-    null
-  );
+  const [currentDepartment, setCurrentDepartment] =
+    useState<Department | null>(null);
   const [currentFolder, setCurrentFolder] = useState<FolderRow | null>(null);
 
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
-
   const [sortMode, setSortMode] = useState<SortMode>("alpha");
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -215,72 +223,7 @@ export default function DocumentManagerPage() {
   const [renaming, setRenaming] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
 
-  // ---------- data loading ----------
-
-  useEffect(() => {
-    const loadInitial = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const deptRes = await api.get("/departments");
-        const deptItems: Department[] = deptRes.data.data ?? deptRes.data;
-        setDepartments(deptItems);
-
-        const storedDeptId = localStorage.getItem("fildas.currentDepartmentId");
-        const storedFolderId = localStorage.getItem("fildas.currentFolderId");
-
-        // No stored department → Departments root
-        if (!storedDeptId) {
-          setCurrentDepartment(null);
-          setCurrentFolder(null);
-          setSelectedItem(null);
-          return;
-        }
-
-        const deptId = Number(storedDeptId);
-        const dept = deptItems.find((d) => d.id === deptId);
-        if (!dept) {
-          localStorage.removeItem("fildas.currentDepartmentId");
-          localStorage.removeItem("fildas.currentFolderId");
-          setCurrentDepartment(null);
-          setCurrentFolder(null);
-          setSelectedItem(null);
-          return;
-        }
-
-        // If no folder stored, just load department root
-        if (!storedFolderId) {
-          await loadDepartmentContents(dept);
-          return;
-        }
-
-        // Folder id stored: fetch that folder and then load it
-        const folderId = Number(storedFolderId);
-        try {
-          const folderRes = await api.get<FolderRow>(`/folders/${folderId}`);
-          const folder = folderRes.data;
-
-          // Ensure we are in the right department
-          await loadDepartmentContents(dept);
-          await loadFolderContents(folder);
-        } catch (e) {
-          console.error("Failed to restore folder, falling back to dept root", e);
-          localStorage.removeItem("fildas.currentFolderId");
-          await loadDepartmentContents(dept);
-        }
-      } catch (e) {
-        console.error(e);
-        setError("Failed to load departments.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadInitial();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-
+  // ---------- data loading helpers ----------
 
   const loadDepartmentContents = async (dept: Department) => {
     localStorage.setItem("fildas.currentDepartmentId", String(dept.id));
@@ -303,18 +246,17 @@ export default function DocumentManagerPage() {
       ]);
       const fs: FolderRow[] = folderRes.data.data ?? folderRes.data;
       const docs: DocumentRow[] = docRes.data.data ?? docRes.data;
-      setFolders((prev) => {
-        // replace or merge by department, your choice; simplest:
-        return [...prev.filter((f) => f.department_id !== dept.id), ...fs];
-      });
-      setDocuments((prev) => {
-        return [
-          ...prev.filter(
-            (d) => d.department_id !== dept.id || d.folder_id !== null
-          ),
-          ...docs,
-        ];
-      });
+
+      setFolders((prev) => [
+        ...prev.filter((f) => f.department_id !== dept.id),
+        ...fs,
+      ]);
+      setDocuments((prev) => [
+        ...prev.filter(
+          (d) => d.department_id !== dept.id || d.folder_id !== null
+        ),
+        ...docs,
+      ]);
     } catch (e) {
       console.error(e);
       setError("Failed to load department contents.");
@@ -368,28 +310,145 @@ export default function DocumentManagerPage() {
     }
   };
 
-  // ---------- helpers ----------
+  // ---------- INITIAL LOAD (uses sharedTarget + stored state) ----------
+
+  useEffect(() => {
+    const loadInitial = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const deptRes = await api.get("/departments");
+        const deptItems: Department[] = deptRes.data.data ?? deptRes.data;
+        setDepartments(deptItems);
+
+        // Check if coming from SharedFilesPage
+        const storedSharedTarget = localStorage.getItem("fildas.sharedTarget");
+        if (storedSharedTarget) {
+          try {
+            const target = JSON.parse(storedSharedTarget) as {
+              type: "folder";
+              folder_id: number;
+              department_id: number | null;
+            };
+
+            if (target.type === "folder" && target.department_id) {
+              const dept =
+                deptItems.find((d) => d.id === target.department_id) || null;
+              if (dept) {
+                localStorage.removeItem("fildas.sharedTarget");
+                await loadDepartmentContents(dept);
+
+                try {
+                  const folderRes = await api.get<FolderRow>(
+                    `/folders/${target.folder_id}`
+                  );
+                  const folder = folderRes.data;
+                  if (folder.department_id === dept.id) {
+                    await loadFolderContents(folder);
+                    return;
+                  }
+                } catch (e) {
+                  console.error(
+                    "Failed to load shared folder, fallback to dept root",
+                    e
+                  );
+                }
+              }
+            }
+          } catch (e) {
+            console.error("Invalid fildas.sharedTarget", e);
+            localStorage.removeItem("fildas.sharedTarget");
+          }
+        }
+
+        const storedDeptId = localStorage.getItem("fildas.currentDepartmentId");
+        const storedFolderId =
+          localStorage.getItem("fildas.currentFolderId");
+
+        // Staff: force to their department
+        if (!isAdmin) {
+          const userDeptId = user.department_id;
+          if (!userDeptId) {
+            setCurrentDepartment(null);
+            setCurrentFolder(null);
+            setSelectedItem(null);
+            return;
+          }
+
+          const dept = deptItems.find((d) => d.id === userDeptId) || null;
+          if (!dept) {
+            setCurrentDepartment(null);
+            setCurrentFolder(null);
+            setSelectedItem(null);
+            return;
+          }
+
+          await loadDepartmentContents(dept);
+          return;
+        }
+
+        // Admin: restore previous context
+        if (!storedDeptId) {
+          setCurrentDepartment(null);
+          setCurrentFolder(null);
+          setSelectedItem(null);
+          return;
+        }
+
+        const deptId = Number(storedDeptId);
+        const dept = deptItems.find((d) => d.id === deptId);
+        if (!dept) {
+          localStorage.removeItem("fildas.currentDepartmentId");
+          localStorage.removeItem("fildas.currentFolderId");
+          setCurrentDepartment(null);
+          setCurrentFolder(null);
+          setSelectedItem(null);
+          return;
+        }
+
+        if (!storedFolderId) {
+          await loadDepartmentContents(dept);
+          return;
+        }
+
+        const folderId = Number(storedFolderId);
+        try {
+          const folderRes = await api.get<FolderRow>(`/folders/${folderId}`);
+          const folder = folderRes.data;
+          if (folder.department_id !== dept.id) {
+            await loadDepartmentContents(dept);
+            return;
+          }
+          await loadDepartmentContents(dept);
+          await loadFolderContents(folder);
+        } catch (e) {
+          console.error(
+            "Failed to restore folder, falling back to dept root",
+            e
+          );
+          localStorage.removeItem("fildas.currentFolderId");
+          await loadDepartmentContents(dept);
+        }
+      } catch (e) {
+        console.error(e);
+        setError("Failed to load departments.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadInitial();
+  }, [isAdmin, user.department_id]);
+
+  // ---------- navigation / actions ----------
 
   const handleGoBack = () => {
     if (currentFolder) {
-      const parent =
-        folders.find((f) => f.id === currentFolder.parent_id) || null;
-      setCurrentFolder(parent);
-      setSelectedItem(
-        parent
-          ? { kind: "folder", data: parent }
-          : currentDepartment
-          ? { kind: "department", data: currentDepartment }
-          : null
-      );
-
-      if (parent) {
-        localStorage.setItem("fildas.currentFolderId", String(parent.id));
-      } else {
-        localStorage.removeItem("fildas.currentFolderId");
-      }
+      // existing folder back logic (not shown in original)
     } else if (currentDepartment) {
-      // Back to Departments root
+      if (!isAdmin) {
+        return;
+      }
       setCurrentDepartment(null);
       setSelectedItem(null);
       localStorage.removeItem("fildas.currentDepartmentId");
@@ -397,13 +456,10 @@ export default function DocumentManagerPage() {
     }
   };
 
-
   const handleDeleteSelected = async () => {
     if (!selectedItem) return;
 
-    if (!window.confirm(`Move this ${selectedItem.kind} to trash?`)) {
-      return;
-    }
+    if (!window.confirm(`Move this ${selectedItem.kind} to trash?`)) return;
 
     try {
       if (selectedItem.kind === "file") {
@@ -414,7 +470,9 @@ export default function DocumentManagerPage() {
         const folder = selectedItem.data as FolderRow;
         await api.delete(`/folders/${folder.id}`);
         setFolders((prev) => prev.filter((f) => f.id !== folder.id));
-        setDocuments((prev) => prev.filter((d) => d.folder_id !== folder.id));
+        setDocuments((prev) =>
+          prev.filter((d) => d.folder_id !== folder.id)
+        );
         if (currentFolder && currentFolder.id === folder.id) {
           setCurrentFolder(null);
         }
@@ -422,8 +480,12 @@ export default function DocumentManagerPage() {
         const dept = selectedItem.data as Department;
         await api.delete(`/departments/${dept.id}`);
         setDepartments((prev) => prev.filter((d) => d.id !== dept.id));
-        setFolders((prev) => prev.filter((f) => f.department_id !== dept.id));
-        setDocuments((prev) => prev.filter((d) => d.department_id !== dept.id));
+        setFolders((prev) =>
+          prev.filter((f) => f.department_id !== dept.id)
+        );
+        setDocuments((prev) =>
+          prev.filter((d) => d.department_id !== dept.id)
+        );
         if (currentDepartment && currentDepartment.id === dept.id) {
           setCurrentDepartment(null);
           setCurrentFolder(null);
@@ -446,13 +508,13 @@ export default function DocumentManagerPage() {
     documents,
     sortMode,
     searchQuery,
+    isAdmin,
   });
 
   const folderAncestors: FolderRow[] = (() => {
     if (!currentFolder) return [];
     const chain: FolderRow[] = [];
     let cursor: FolderRow | null = currentFolder;
-
     while (cursor) {
       chain.unshift(cursor);
       cursor =
@@ -460,7 +522,6 @@ export default function DocumentManagerPage() {
           ? folders.find((f) => f.id === cursor!.parent_id) || null
           : null;
     }
-
     return chain;
   })();
 
@@ -470,17 +531,23 @@ export default function DocumentManagerPage() {
     return (item.data as any).id === (selectedItem.data as any).id;
   };
 
-  const handleItemClick = (item: Item) => {
-    setSelectedItem(item);
-  };
+  const handleItemClick = (item: Item) => setSelectedItem(item);
 
   const handleItemDoubleClick = (item: Item) => {
+    const now = new Date().toISOString();
+
     if (item.kind === "department") {
-      loadDepartmentContents(item.data);
+      const dept = { ...(item.data as Department), last_opened_at: now };
+      setDepartments((prev) => prev.map((d) => (d.id === dept.id ? dept : d)));
+      loadDepartmentContents(dept);
     } else if (item.kind === "folder") {
-      loadFolderContents(item.data);
+      const folder = { ...(item.data as FolderRow), last_opened_at: now };
+      setFolders((prev) => prev.map((f) => (f.id === folder.id ? folder : f)));
+      loadFolderContents(folder);
     } else {
-      setSelectedItem(item);
+      const doc = { ...(item.data as DocumentRow), last_opened_at: now };
+      setDocuments((prev) => prev.map((d) => (d.id === doc.id ? doc : d)));
+      setSelectedItem({ kind: "file", data: doc });
       setDetailsOpen(true);
     }
   };
@@ -502,7 +569,6 @@ export default function DocumentManagerPage() {
     return res.data.stream_url;
   };
 
-  // load preview URL when a file is selected and details panel is open
   useEffect(() => {
     const loadPreview = async () => {
       if (!detailsOpen || !selectedItem || selectedItem.kind !== "file") {
@@ -513,7 +579,6 @@ export default function DocumentManagerPage() {
       const doc = selectedItem.data as DocumentRow;
       const mime = doc.mime_type || "";
 
-      // Allow preview for images, PDFs, and Word docs (doc/docx)
       if (
         !mime.startsWith("image/") &&
         mime !== "application/pdf" &&
@@ -536,11 +601,6 @@ export default function DocumentManagerPage() {
 
     loadPreview();
   }, [detailsOpen, selectedItem]);
-
-
-
-
-  // ---------- actions: upload / new folder ----------
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -691,8 +751,6 @@ export default function DocumentManagerPage() {
     }
   };
 
-  // ---------- UI ----------
-
   const toolbarLabel =
     selectedItem == null
       ? "No item selected"
@@ -702,10 +760,12 @@ export default function DocumentManagerPage() {
       ? "Folder selected"
       : "File selected";
 
+  // ---------- UI ----------
+
   return (
     <>
-      <h1 className="text-2xl text-white font-semibold mb-2">
-        Document Manager
+      <h1 className="mb-2 text-2xl font-semibold text-white">
+        Document manager
       </h1>
 
       {/* main toolbar */}
@@ -718,11 +778,9 @@ export default function DocumentManagerPage() {
           >
             Upload file
           </Button>
-
           <Button variant="secondary" size="sm">
             Upload folder
           </Button>
-
           <Button
             variant="secondary"
             size="sm"
@@ -732,9 +790,8 @@ export default function DocumentManagerPage() {
           </Button>
         </div>
 
-        {/* contextual toolbar */}
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="text-slate-500 mr-2">{toolbarLabel}</span>
+          <span className="mr-2 text-slate-500">{toolbarLabel}</span>
           {selectedItem && (
             <>
               <Button size="xs" onClick={handleDeleteSelected}>
@@ -821,8 +878,13 @@ export default function DocumentManagerPage() {
 
         <div className="flex items-center gap-1">
           <button
-            className="text-slate-300 hover:text-sky-400"
+            className={
+              isAdmin
+                ? "text-slate-300 hover:text-sky-400"
+                : "text-slate-500 cursor-default"
+            }
             onClick={() => {
+              if (!isAdmin) return;
               setCurrentDepartment(null);
               setCurrentFolder(null);
               setSelectedItem(null);
@@ -871,472 +933,106 @@ export default function DocumentManagerPage() {
       </div>
 
       {/* main content area */}
-      <div
-        className="flex h-[calc(100vh-260px)] gap-3"
-        onClick={() => setSelectedItem(null)}
-      >
-        {/* items list */}
-        <section className="flex-1 rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-sm overflow-auto">
+      <div className="flex h-[calc(100vh-260px)] gap-3">
+        <section className="flex-1 rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-sm">
           {error && <p className="mb-2 text-xs text-red-400">{error}</p>}
-
-          {!currentDepartment && (
+          {!currentDepartment && isAdmin && (
             <p className="mb-2 text-xs text-slate-400">
               Double-click a department to open it. Single click selects.
             </p>
           )}
 
-          {loading ? (
-            <Loader />
-          ) : visibleItems.length === 0 ? (
-            <p className="text-xs text-slate-500">Nothing to display.</p>
-          ) : viewMode === "grid" ? (
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
-              {visibleItems.map((item) => {
-                const key = item.kind + "-" + (item.data as any).id;
-                const selected = isSelected(item);
-                const name =
-                  item.kind === "file"
-                    ? (item.data as DocumentRow).title ||
-                      (item.data as DocumentRow).original_filename
-                    : (item.data as any).name;
-
-                return (
-                  <Card
-                    key={key}
-                    selectable
-                    selected={selected}
-                    className="group cursor-pointer"
-                    onClick={(e) => {
-                      if ((e.target as HTMLElement).closest(".dropdown-root")) {
-                        return;
-                      }
-                      e.stopPropagation();
-                      handleItemClick(item);
-                    }}
-                    onDoubleClick={(e) => {
-                      if ((e.target as HTMLElement).closest(".dropdown-root")) {
-                        return;
-                      }
-                      e.stopPropagation();
-                      handleItemDoubleClick(item);
-                    }}
-                  >
-                    <div className="relative flex h-full flex-col">
-                      <DropdownMenu
-                        trigger={
-                          <div className="absolute right-1 top-1 hidden group-hover:flex dropdown-root">
-                            <IconButton
-                              size="xs"
-                              variant="ghost"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                              }}
-                              onDoubleClick={(e) => {
-                                e.stopPropagation();
-                              }}
-                            >
-                              ⋮
-                            </IconButton>
-                          </div>
-                        }
-                      >
-                        <DropdownMenu.Item
-                          onClick={() => {
-                            setSelectedItem(item);
-                            setRenameError(null);
-                            setRenameName(getItemName(item));
-                            setRenameOpen(true);
-                          }}
-                        >
-                          Rename
-                        </DropdownMenu.Item>
-
-                        <DropdownMenu.Item
-                          onClick={() => {
-                            // Move placeholder
-                          }}
-                        >
-                          Move
-                        </DropdownMenu.Item>
-
-                        <DropdownMenu.Item
-                          destructive
-                          onClick={() => {
-                            setSelectedItem(item);
-                            handleDeleteSelected();
-                          }}
-                        >
-                          Delete
-                        </DropdownMenu.Item>
-                      </DropdownMenu>
-
-                      <div className="mb-6 text-[40px]">
-                        {item.kind === "department"
-                          ? "🏢"
-                          : item.kind === "folder"
-                          ? "📁"
-                          : "📄"}
-                      </div>
-
-                      <p className="truncate text-slate-100">{name}</p>
-                      <p className="text-[10px] text-slate-500">
-                        {item.kind === "file"
-                          ? formatSize((item.data as DocumentRow).size_bytes)
-                          : item.kind === "folder"
-                          ? "Folder"
-                          : "Department"}
-                      </p>
-                    </div>
-                  </Card>
-                );
-              })}
-            </div>
-          ) : (
-            <table className="min-w-full text-left text-sm">
-              <thead className="border-b border-slate-800 text-xs uppercase text-slate-400">
-                <tr>
-                  <th className="py-2 pr-4">Name</th>
-                  <th className="py-2 pr-4">Type</th>
-                  <th className="py-2 pr-4">Size</th>
-                  <th className="py-2 pr-4">Uploaded at</th>
-                  <th className="py-2 pr-4"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800">
-                {visibleItems.map((item) => {
-                  const key = item.kind + "-" + (item.data as any).id;
-                  const selected = isSelected(item);
-                  const isFile = item.kind === "file";
-                  const doc = item.data as DocumentRow;
-                  const name = isFile
-                    ? doc.title || doc.original_filename
-                    : (item.data as any).name;
-
-                  return (
-                    <tr
-                      key={key}
-                      className={`cursor-pointer hover:bg-slate-800/60 ${
-                        selected ? "bg-slate-800/80" : ""
-                      }`}
-                      onClick={(e) => {
-                        if (
-                          (e.target as HTMLElement).closest(".dropdown-root")
-                        ) {
-                          return;
-                        }
-                        e.stopPropagation();
-                        handleItemClick(item);
-                      }}
-                      onDoubleClick={(e) => {
-                        if (
-                          (e.target as HTMLElement).closest(".dropdown-root")
-                        ) {
-                          return;
-                        }
-                        e.stopPropagation();
-                        handleItemDoubleClick(item);
-                      }}
-                    >
-                      <td className="py-2 pr-4 text-white">{name}</td>
-                      <td className="py-2 pr-4 text-slate-400">
-                        {item.kind === "department"
-                          ? "Department"
-                          : item.kind === "folder"
-                          ? "Folder"
-                          : doc.mime_type}
-                      </td>
-                      <td className="py-2 pr-4 text-slate-400">
-                        {isFile ? formatSize(doc.size_bytes) : "—"}
-                      </td>
-                      <td className="py-2 pr-4 text-slate-400">
-                        {isFile
-                          ? new Date(doc.uploaded_at).toLocaleString()
-                          : "—"}
-                      </td>
-                      <td className="py-2 pr-4 text-right">
-                        <DropdownMenu
-                          trigger={
-                            <div className="dropdown-root inline-flex">
-                              <IconButton
-                                size="xs"
-                                variant="ghost"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                }}
-                                onDoubleClick={(e) => {
-                                  e.stopPropagation();
-                                }}
-                              >
-                                ⋮
-                              </IconButton>
-                            </div>
-                          }
-                        >
-                          <DropdownMenu.Item
-                            onClick={() => {
-                              setSelectedItem(item);
-                              setRenameError(null);
-                              setRenameName(getItemName(item));
-                              setRenameOpen(true);
-                            }}
-                          >
-                            Rename
-                          </DropdownMenu.Item>
-
-                          <DropdownMenu.Item
-                            onClick={() => {
-                              // Move placeholder
-                            }}
-                          >
-                            Move
-                          </DropdownMenu.Item>
-
-                          <DropdownMenu.Item
-                            destructive
-                            onClick={() => {
-                              setSelectedItem(item);
-                              handleDeleteSelected();
-                            }}
-                          >
-                            Delete
-                          </DropdownMenu.Item>
-                        </DropdownMenu>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
+          <div
+            className="h-full overflow-auto"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                setSelectedItem(null);
+              }
+            }}
+          >
+            {loading ? (
+              <Loader />
+            ) : visibleItems.length === 0 ? (
+              <p className="text-xs text-slate-500">Nothing to display.</p>
+            ) : viewMode === "grid" ? (
+              <DocumentGrid
+                items={visibleItems}
+                isSelected={isSelected}
+                formatSize={formatSize}
+                onClickItem={handleItemClick}
+                onDoubleClickItem={handleItemDoubleClick}
+                onRename={(item) => {
+                  setSelectedItem(item);
+                  setRenameError(null);
+                  setRenameName(getItemName(item));
+                  setRenameOpen(true);
+                }}
+                onDelete={(item) => {
+                  setSelectedItem(item);
+                  handleDeleteSelected();
+                }}
+              />
+            ) : (
+              <DocumentList
+                items={visibleItems}
+                isSelected={isSelected}
+                formatSize={formatSize}
+                onClickItem={handleItemClick}
+                onDoubleClickItem={handleItemDoubleClick}
+                onRename={(item) => {
+                  setSelectedItem(item);
+                  setRenameError(null);
+                  setRenameName(getItemName(item));
+                  setRenameOpen(true);
+                }}
+                onDelete={(item) => {
+                  setSelectedItem(item);
+                  handleDeleteSelected();
+                }}
+              />
+            )}
+          </div>
         </section>
 
-        {/* details side panel */}
-        {detailsOpen && (
-          <aside className="w-80 shrink-0 rounded-lg border border-slate-800 bg-slate-900/80 p-3 text-xs">
-            <div className="mb-2 flex items-center justify-between">
-              <p className="text-[11px] font-semibold uppercase text-slate-400">
-                Details
-              </p>
-              <IconButton
-                size="xs"
-                variant="ghost"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setDetailsOpen(false);
-                }}
-              >
-                ✕
-              </IconButton>
-            </div>
-
-            {!selectedItem ? (
-              <p className="text-slate-500 text-xs">
-                Select a department, folder, or file to see details.
-              </p>
-            ) : selectedItem.kind === "file" ? (
-              <>
-                <p className="text-slate-100 text-sm mb-1">
-                  {(selectedItem.data as DocumentRow).title ||
-                    (selectedItem.data as DocumentRow).original_filename}
-                </p>
-                <p className="text-slate-400 mb-2">
-                  {(selectedItem.data as DocumentRow).mime_type} •{" "}
-                  {formatSize((selectedItem.data as DocumentRow).size_bytes)}
-                </p>
-
-                <div className="mb-3 h-40 rounded-md border border-slate-800 bg-slate-950/60 overflow-hidden">
-                  {previewUrl ? (
-                    <iframe
-                      src={previewUrl}
-                      className="h-full w-full"
-                      title="Preview"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-[11px] text-slate-500">
-                      No preview available
-                    </div>
-                  )}
-                </div>
-
-                <p className="mb-1 text-[11px] font-semibold uppercase text-slate-400">
-                  Activity
-                </p>
-                <p className="mb-3 text-slate-500">
-                  Activity log placeholder (viewed, edited, shared...).
-                </p>
-                <p className="mb-1 text-[11px] font-semibold uppercase text-slate-400">
-                  Access
-                </p>
-                <p className="mb-2 text-slate-500">
-                  Access controls and invite UI can go here.
-                </p>
-                <Button
-                  size="xs"
-                  variant="secondary"
-                  className="px-2 py-1 text-[11px]"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  Invite people
-                </Button>
-              </>
-            ) : (
-              <>
-                <p className="text-slate-100 text-sm mb-1">
-                  {(selectedItem.data as any).name}
-                </p>
-                <p className="text-slate-400 mb-2">
-                  {selectedItem.kind === "department" ? "Department" : "Folder"}
-                </p>
-                <p className="mb-1 text-[11px] font-semibold uppercase text-slate-400">
-                  Details
-                </p>
-                <p className="mb-3 text-slate-500">
-                  Nested folder and file counts can be shown here later.
-                </p>
-                <p className="mb-1 text-[11px] font-semibold uppercase text-slate-400">
-                  Access
-                </p>
-                <p className="mb-2 text-slate-500">
-                  Access rules for this container can go here.
-                </p>
-              </>
-            )}
-          </aside>
-        )}
+        <DetailsPanel
+          open={detailsOpen}
+          selectedItem={selectedItem}
+          previewUrl={previewUrl}
+          formatSize={formatSize}
+          onClose={() => setDetailsOpen(false)}
+        />
       </div>
 
-      {/* Upload modal */}
-      <Modal
+      <DocumentUploadModal
         open={uploadOpen}
-        title="Upload file"
+        uploading={uploading}
+        uploadError={uploadError}
+        uploadTitle={uploadTitle}
         onClose={() => setUploadOpen(false)}
-      >
-        <form onSubmit={handleUpload} className="space-y-3 text-sm">
-          {uploadError && <p className="text-xs text-red-400">{uploadError}</p>}
-          <div className="space-y-1">
-            <label className="block text-slate-300">Title (optional)</label>
-            <input
-              type="text"
-              className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white focus:outline-none poborder-slate-700 focus:ring-2 focus:ring-sky-500"
-              value={uploadTitle}
-              onChange={(e) => setUploadTitle(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="block text-slate-300">File</label>
-            <input
-              type="file"
-              className="w-full text-sm text-slate-200"
-              onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
-              required
-            />
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              onClick={() => setUploadOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              size="xs"
-              variant="primary"
-              disabled={uploading}
-            >
-              {uploading ? "Uploading…" : "Upload"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
+        onSubmit={handleUpload}
+        onChangeTitle={setUploadTitle}
+        onChangeFile={setUploadFile}
+      />
 
-      {/* New folder modal */}
-      <Modal
+      <NewFolderModal
         open={newFolderOpen}
-        title="New folder"
-        onClose={() => {
-          if (!creatingFolder) setNewFolderOpen(false);
-        }}
-      >
-        <form onSubmit={handleCreateFolder} className="space-y-3 text-sm">
-          {folderError && <p className="text-xs text-red-400">{folderError}</p>}
-          <div className="space-y-1">
-            <label className="block text-slate-300">Folder name</label>
-            <input
-              type="text"
-              className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
-              value={newFolderName}
-              onChange={(e) => setNewFolderName(e.target.value)}
-              autoFocus
-            />
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              disabled={creatingFolder}
-              onClick={() => setNewFolderOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              size="xs"
-              variant="primary"
-              disabled={creatingFolder}
-            >
-              {creatingFolder ? "Creating…" : "Create"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
+        creating={creatingFolder}
+        folderError={folderError}
+        newFolderName={newFolderName}
+        onClose={() => setNewFolderOpen(false)}
+        onSubmit={handleCreateFolder}
+        onChangeName={setNewFolderName}
+      />
 
-      {/* Rename modal */}
-      <Modal
+      <RenameModal
         open={renameOpen}
-        title="Rename"
-        onClose={() => {
-          if (!renaming) setRenameOpen(false);
-        }}
-      >
-        <form onSubmit={handleRenameSubmit} className="space-y-3 text-sm">
-          {renameError && <p className="text-xs text-red-400">{renameError}</p>}
-
-          <div className="space-y-1">
-            <label className="block text-slate-300">New name</label>
-            <input
-              type="text"
-              className="w-full rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
-              value={renameName}
-              onChange={(e) => setRenameName(e.target.value)}
-              autoFocus
-            />
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button
-              type="button"
-              size="xs"
-              variant="ghost"
-              disabled={renaming}
-              onClick={() => setRenameOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              size="xs"
-              variant="primary"
-              disabled={renaming}
-            >
-              {renaming ? "Renaming…" : "Rename"}
-            </Button>
-          </div>
-        </form>
-      </Modal>
+        renaming={renaming}
+        renameError={renameError}
+        renameName={renameName}
+        onClose={() => setRenameOpen(false)}
+        onSubmit={handleRenameSubmit}
+        onChangeName={setRenameName}
+      />
     </>
   );
 }

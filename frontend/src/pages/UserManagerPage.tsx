@@ -39,8 +39,9 @@ export default function UserManagerPage() {
   const [form, setForm] = useState<UserFormState>(EMPTY_FORM);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
-  // 1) load users from Laravel
+  // load users from API
   const loadUsers = async () => {
     setLoading(true);
     try {
@@ -106,7 +107,7 @@ export default function UserManagerPage() {
         });
       }
 
-      await loadUsers(); // refresh table
+      await loadUsers();
       setUserModalOpen(false);
       setForm(EMPTY_FORM);
     } catch (err) {
@@ -116,113 +117,139 @@ export default function UserManagerPage() {
     }
   };
 
+  const filtered = users.filter((u) => {
+    const q = search.toLowerCase();
+    return (
+      u.name.toLowerCase().includes(q) ||
+      u.email.toLowerCase().includes(q) ||
+      u.role.toLowerCase().includes(q)
+    );
+  });
+
   return (
     <>
-      <h1 className="text-2xl font-semibold mb-2 text-white">User Manager</h1>
-      {/* <p className="text-slate-300 text-sm mb-4">
-        Manage staff accounts, roles, and permissions for the archive.
-      </p> */}
+      <div className="flex h-full flex-col gap-3">
+        {/* Header */}
+        <header>
+          <h1 className="mb-1 text-2xl font-semibold text-white">
+            User manager
+          </h1>
+        </header>
 
-      {/* Toolbar */}
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex gap-2">
-          <button
-            className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-500"
-            onClick={openCreate}
-          >
-            + New user
-          </button>
-          <button className="rounded-md border border-slate-700 px-3 py-2 text-sm text-white hover:bg-slate-800">
-            Bulk actions
-          </button>
+        {/* Toolbar */}
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex gap-2">
+            <button
+              className="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-500"
+              onClick={openCreate}
+            >
+              + New user
+            </button>
+            <button className="rounded-md border border-slate-700 px-3 py-2 text-sm text-white hover:bg-slate-800">
+              Bulk actions
+            </button>
+          </div>
+
+          <div className="flex gap-2">
+            <input
+              className="rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+              placeholder="Search users…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <select className="rounded-md border border-slate-700 bg-slate-900/60 px-2 py-2 text-sm text-white focus:outline-none">
+              <option>All roles</option>
+              <option>QA Admin</option>
+              <option>Librarian</option>
+              <option>Staff</option>
+            </select>
+          </div>
         </div>
 
-        <div className="flex gap-2">
-          <input
-            className="rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-            placeholder="Search users..."
-          />
-          <select className="rounded-md border border-slate-700 bg-slate-900/60 px-2 py-2 text-sm text-white focus:outline-none">
-            <option>All roles</option>
-            <option>QA Admin</option>
-            <option>Librarian</option>
-            <option>Staff</option>
-          </select>
-        </div>
-      </div>
+        {/* Users table */}
+        <section className="flex-1 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-sm">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-xs font-semibold uppercase text-slate-400">
+              Users
+            </p>
+            <p className="text-xs text-slate-500">
+              {loading
+                ? "Loading…"
+                : `Showing ${filtered.length} of ${users.length} user(s)`}
+            </p>
+          </div>
 
-      {/* Users table */}
-      <section className="rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-sm">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-xs font-semibold uppercase text-slate-400">
-            Users
-          </p>
-          <p className="text-xs text-slate-500">
-            {loading ? "Loading..." : `Showing ${users.length} user(s)`}
-          </p>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-sm">
-            <thead className="border-b border-slate-800 text-xs uppercase text-slate-400">
-              <tr>
-                <th className="py-2 pr-4">Name</th>
-                <th className="py-2 pr-4">Email</th>
-                <th className="py-2 pr-4">Role</th>
-                <th className="py-2 pr-4">Status</th>
-                <th className="py-2 pr-4">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800">
-              {loading && (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead className="border-b border-slate-800 text-xs uppercase text-slate-400">
                 <tr>
-                  <td
-                    colSpan={5}
-                    className="py-4 text-center text-slate-500 text-sm"
-                  >
-                    Loading users...
-                  </td>
+                  <th className="py-2 pr-4">Name</th>
+                  <th className="py-2 pr-4">Email</th>
+                  <th className="py-2 pr-4">Role</th>
+                  <th className="py-2 pr-4">Status</th>
+                  <th className="py-2 pr-4">Actions</th>
                 </tr>
-              )}
-
-              {!loading &&
-                users.map((user) => (
-                  <tr key={user.id} className="hover:bg-slate-800/60">
-                    <td className="py-2 pr-4 text-white">{user.name}</td>
-                    <td className="py-2 pr-4 text-slate-400">{user.email}</td>
-                    <td className="py-2 pr-4">
-                      <span className="rounded-full bg-slate-500/20 px-2 py-0.5 text-xs text-slate-200">
-                        {user.role}
-                      </span>
-                    </td>
-                    <td className="py-2 pr-4 text-emerald-400">
-                      {user.status === "active" ? "Active" : "Disabled"}
-                    </td>
-                    <td className="py-2 pr-4 space-x-2">
-                      <button
-                        className="text-xs text-sky-400 hover:underline"
-                        onClick={() => openEditWithUser(user)}
-                      >
-                        Edit
-                      </button>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {loading && (
+                  <tr>
+                    <td
+                      colSpan={5}
+                      className="py-4 text-center text-sm text-slate-500"
+                    >
+                      Loading users…
                     </td>
                   </tr>
-                ))}
+                )}
 
-              {!loading && users.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={5}
-                    className="py-4 text-center text-slate-500 text-sm"
-                  >
-                    No users yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                {!loading &&
+                  filtered.map((user) => (
+                    <tr key={user.id} className="hover:bg-slate-800/60">
+                      <td className="py-2 pr-4 text-white">{user.name}</td>
+                      <td className="py-2 pr-4 text-slate-400">{user.email}</td>
+                      <td className="py-2 pr-4">
+                        <span className="rounded-full bg-slate-500/20 px-2 py-0.5 text-xs text-slate-200">
+                          {user.role}
+                        </span>
+                      </td>
+                      <td
+                        className={
+                          "py-2 pr-4 text-xs " +
+                          (user.status === "active"
+                            ? "text-emerald-400"
+                            : "text-slate-400")
+                        }
+                      >
+                        {user.status === "active" ? "Active" : "Disabled"}
+                      </td>
+                      <td className="py-2 pr-4 space-x-2">
+                        <button
+                          className="text-xs text-sky-400 hover:underline"
+                          onClick={() => openEditWithUser(user)}
+                        >
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+
+                {!loading && filtered.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={5}
+                      className="py-4 text-center text-sm text-slate-500"
+                    >
+                      {users.length === 0
+                        ? "No users yet."
+                        : "No users match your search."}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
 
       {/* New/Edit user modal */}
       <Modal
@@ -232,14 +259,14 @@ export default function UserManagerPage() {
       >
         <form className="space-y-3 text-sm" onSubmit={handleSubmit}>
           {errorMsg && (
-            <p className="text-xs text-rose-400 bg-rose-950/40 border border-rose-900 rounded px-2 py-1">
+            <p className="rounded border border-rose-900 bg-rose-950/40 px-2 py-1 text-xs text-rose-400">
               {errorMsg}
             </p>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
-              <label className="block text-xs text-slate-400 mb-1">
+              <label className="mb-1 block text-xs text-slate-400">
                 Full name
               </label>
               <input
@@ -249,7 +276,7 @@ export default function UserManagerPage() {
               />
             </div>
             <div>
-              <label className="block text-xs text-slate-400 mb-1">Email</label>
+              <label className="mb-1 block text-xs text-slate-400">Email</label>
               <input
                 type="email"
                 className="w-full rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
@@ -259,9 +286,9 @@ export default function UserManagerPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
-              <label className="block text-xs text-slate-400 mb-1">Role</label>
+              <label className="mb-1 block text-xs text-slate-400">Role</label>
               <select
                 className="w-full rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-white focus:outline-none"
                 value={form.role}
@@ -273,7 +300,7 @@ export default function UserManagerPage() {
               </select>
             </div>
             <div>
-              <label className="block text-xs text-slate-400 mb-1">
+              <label className="mb-1 block text-xs text-slate-400">
                 Status
               </label>
               <select
@@ -288,7 +315,7 @@ export default function UserManagerPage() {
           </div>
 
           <div>
-            <label className="block text-xs text-slate-400 mb-1">
+            <label className="mb-1 block text-xs text-slate-400">
               Password (leave blank to keep current)
             </label>
             <input

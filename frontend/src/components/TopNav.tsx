@@ -1,11 +1,18 @@
-// src/components/TopNav.tsx
 import { useState, useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "./ui/Button";
 import { IconButton } from "./ui/IconButton";
+import { api } from "../lib/api";
 
-export default function TopNav() {
+interface TopNavProps {
+  onLogout?: () => void;
+}
+
+export default function TopNav({ onLogout }: TopNavProps) {
   const [open, setOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -15,6 +22,32 @@ export default function TopNav() {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
+
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    try {
+      // Call logout endpoint to invalidate token on server
+      await api.post("/logout");
+    } catch (err) {
+      console.error("Logout error:", err);
+    } finally {
+      // Clear local storage
+      localStorage.removeItem("fildas_token");
+      localStorage.removeItem("fildas_user");
+
+      // Clear auth header
+      delete api.defaults.headers.common["Authorization"];
+
+      // Call parent callback if provided
+      if (onLogout) {
+        onLogout();
+      }
+
+      // Redirect to login
+      navigate("/login", { replace: true });
+      setLoggingOut(false);
+    }
+  };
 
   return (
     <header className="h-14 border-b border-slate-800 bg-slate-950/80 backdrop-blur flex items-center justify-between px-4">
@@ -58,8 +91,10 @@ export default function TopNav() {
               variant="ghost"
               size="xs"
               className="w-full justify-start rounded-none px-3 py-2 text-red-400 hover:text-red-300"
+              onClick={handleLogout}
+              disabled={loggingOut}
             >
-              Logout
+              {loggingOut ? "Logging out..." : "Logout"}
             </Button>
           </div>
         )}

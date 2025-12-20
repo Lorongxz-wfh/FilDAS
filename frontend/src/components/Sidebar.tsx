@@ -5,16 +5,21 @@ import { Button } from "./ui/Button";
 type SidebarProps = {
   activePage: PageKey;
   onNavigate: (page: PageKey) => void;
+  isAdmin: boolean;
 };
 
-export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
+export default function Sidebar({
+  activePage,
+  onNavigate,
+  isAdmin,
+}: SidebarProps) {
   const itemVariant = (active: boolean) =>
     active ? "primary" : ("ghost" as const);
 
   return (
-    <aside className="w-60 h-full border-r border-slate-800 bg-slate-950/60 px-3 py-4 flex flex-col">
+    <aside className="flex h-full w-60 flex-col border-r border-slate-800 bg-slate-950/60 px-3 py-4">
       <p className="mb-3 px-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-        Admin
+        {isAdmin ? "Admin" : "Staff"}
       </p>
 
       <nav className="space-y-1">
@@ -45,23 +50,27 @@ export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
           Shared Files
         </Button>
 
-        <Button
-          variant={itemVariant(activePage === "users")}
-          size="sm"
-          className="w-full justify-start"
-          onClick={() => onNavigate("users")}
-        >
-          User Manager
-        </Button>
+        {isAdmin && (
+          <>
+            <Button
+              variant={itemVariant(activePage === "users")}
+              size="sm"
+              className="w-full justify-start"
+              onClick={() => onNavigate("users")}
+            >
+              User Manager
+            </Button>
 
-        <Button
-          variant={itemVariant(activePage === "trash")}
-          size="sm"
-          className="w-full justify-start"
-          onClick={() => onNavigate("trash")}
-        >
-          Archive / Trash
-        </Button>
+            <Button
+              variant={itemVariant(activePage === "trash")}
+              size="sm"
+              className="w-full justify-start"
+              onClick={() => onNavigate("trash")}
+            >
+              Archive / Trash
+            </Button>
+          </>
+        )}
       </nav>
     </aside>
   );

@@ -22,7 +22,10 @@ class AuthController extends Controller
             return response()->json(['message' => 'Invalid credentials'], 401);
         }
 
-        // create token for this device
+        // Load role and department relations
+        $user->load(['role', 'department']);
+
+        // Create token for this device
         $token = $user->createToken('fildas-token')->plainTextToken;
 
         return response()->json([

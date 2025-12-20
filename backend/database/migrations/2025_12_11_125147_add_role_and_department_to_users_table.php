@@ -14,6 +14,9 @@ return new class extends Migration
         Schema::table('users', function (Blueprint $table) {
             $table->foreignId('role_id')->nullable()->after('id')->constrained('roles');
             $table->foreignId('department_id')->nullable()->after('role_id')->constrained('departments');
+
+            // Add soft delete column
+            $table->softDeletes(); // adds deleted_at
         });
     }
 
@@ -23,7 +26,13 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('users', function (Blueprint $table) {
-            //
+            $table->dropForeign(['role_id']);
+            $table->dropColumn('role_id');
+
+            $table->dropForeign(['department_id']);
+            $table->dropColumn('department_id');
+
+            $table->dropSoftDeletes();
         });
     }
 };

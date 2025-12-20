@@ -11,7 +11,12 @@ class Folder extends Model
 {
     use SoftDeletes;
 
-    protected $fillable = ['name', 'parent_id', 'department_id'];
+    protected $fillable = [
+        'name',
+        'parent_id',
+        'department_id',
+        'owner_id',
+    ];
 
     public function parent(): BelongsTo
     {
@@ -31,5 +36,10 @@ class Folder extends Model
     public function department(): BelongsTo
     {
         return $this->belongsTo(Department::class);
+    }
+
+    public function owner(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'owner_id');
     }
 }

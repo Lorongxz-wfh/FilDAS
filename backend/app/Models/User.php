@@ -3,13 +3,14 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
 {
-    use HasApiTokens, HasFactory, Notifiable;
+    use HasApiTokens, HasFactory, Notifiable, SoftDeletes;
 
     /**
      * The attributes that are mass assignable.
@@ -21,6 +22,7 @@ class User extends Authenticatable
         'email',
         'password',
         'role_id',
+        'department_id',
         'status',
     ];
 
@@ -43,7 +45,7 @@ class User extends Authenticatable
     {
         return [
             'email_verified_at' => 'datetime',
-            'password' => 'hashed',
+            'password'          => 'hashed',
         ];
     }
 
@@ -53,5 +55,53 @@ class User extends Authenticatable
     public function role()
     {
         return $this->belongsTo(Role::class);
+    }
+
+    /**
+     * Get the department that the user belongs to.
+     */
+    public function department()
+    {
+        return $this->belongsTo(Department::class);
+    }
+
+    /**
+     * Convenience helpers.
+     */
+    public function isAdmin(): bool
+    {
+        return optional($this->role)->name === 'Admin';
+    }
+
+    public function isStaff(): bool
+    {
+        return optional($this->role)->name === 'Staff';
+    }
+
+    public function ownedDepartments()
+    {
+        return $this->hasMany(Department::class, 'owner_id');
+    }
+
+    public function ownedFolders()
+    {
+        return $this->hasMany(Folder::class, 'owner_id');
+    }
+
+    public function ownedDocuments()
+    {
+        return $this->hasMany(Document::class, 'owner_id');
+    }
+
+    // Shares this user created
+    public function outgoingShares()
+    {
+        return $this->hasMany(Share::class, 'owner_id');
+    }
+
+    // Items shared TO this user
+    public function incomingShares()
+    {
+        return $this->hasMany(Share::class, 'target_user_id');
     }
 }

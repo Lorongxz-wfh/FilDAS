@@ -15,6 +15,7 @@ class Department extends Model
         'name',
         'code',
         'description',
+        'owner_id', // <-- allow mass-assigning owner
     ];
 
     public function documents()
@@ -30,5 +31,15 @@ class Department extends Model
     public function folders()
     {
         return $this->hasMany(Folder::class);
+    }
+
+    public function type()
+    {
+        return $this->belongsTo(DepartmentType::class, 'department_type_id');
+    }
+
+    public function owner()
+    {
+        return $this->belongsTo(User::class, 'owner_id');
     }
 }

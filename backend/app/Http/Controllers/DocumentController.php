@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\Document;
+use App\Models\Folder;
+use App\Models\Share;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
@@ -11,25 +13,46 @@ class DocumentController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Document::with(['folder', 'uploadedBy']);
+        $user = $request->user();
 
-        // Filter by department if provided
+        $query = Document::with(['folder', 'uploadedBy', 'owner']);
+
+        // ----- Base filters from request -----
         if ($request->has('department_id')) {
             $query->where('department_id', $request->department_id);
         }
 
-        // Filter by folder if provided
         if ($request->has('folder_id')) {
             $query->where('folder_id', $request->folder_id);
         }
 
-        // Search by title, description, or original filename
         if ($request->has('search')) {
             $search = $request->search;
             $query->where(function ($q) use ($search) {
                 $q->where('title', 'like', "%{$search}%")
                     ->orWhere('description', 'like', "%{$search}%")
                     ->orWhere('original_filename', 'like', "%{$search}%");
+            });
+        }
+
+        // ----- Access scoping for non-admin users -----
+        if (!$user->isAdmin()) {
+            $deptId = $user->department_id;
+
+            // Documents shared directly to this user
+            $sharedDocumentIds = Share::where('target_user_id', $user->id)
+                ->whereNotNull('document_id')
+                ->pluck('document_id')
+                ->toArray();
+
+            $query->where(function ($q) use ($deptId, $sharedDocumentIds) {
+                if ($deptId) {
+                    $q->where('department_id', $deptId);
+                }
+
+                if (!empty($sharedDocumentIds)) {
+                    $q->orWhereIn('id', $sharedDocumentIds);
+                }
             });
         }
 
@@ -42,8 +65,6 @@ class DocumentController extends Controller
 
         return response()->json($documents);
     }
-
-
 
     public function store(Request $request)
     {
@@ -71,55 +92,53 @@ class DocumentController extends Controller
             return response()->json(['error' => 'Failed to store file'], 500);
         }
 
-        $folder = \App\Models\Folder::findOrFail($validated['folder_id']);
+        $folder = Folder::findOrFail($validated['folder_id']);
 
         $document = Document::create([
             'title'             => $validated['title'],
             'description'       => $validated['description'] ?? null,
             'folder_id'         => $validated['folder_id'],
             'department_id'     => $folder->department_id,
-            'document_type_id'  => 1, // <-- set a valid default type ID here
+            'document_type_id'  => 1, // default type
             'file_path'         => $path,
             'original_filename' => $originalName,
             'size_bytes'        => $file->getSize(),
             'mime_type'         => $file->getMimeType(),
             'uploaded_by'       => auth()->id(),
+            'owner_id'          => auth()->id(),   // default owner
             'uploaded_at'       => now(),
         ]);
 
-        return response()->json($document->load(['folder', 'uploadedBy']), 201);
+        return response()->json($document->load(['folder', 'uploadedBy', 'owner']), 201);
     }
-
-
 
     public function show(Document $document)
     {
-        return response()->json($document->load(['folder', 'uploadedBy']));
+        return response()->json($document->load(['folder', 'uploadedBy', 'owner']));
     }
 
     public function update(Request $request, Document $document)
     {
         $validated = $request->validate([
-            'title' => 'sometimes|string|max:255',
+            'title'       => 'sometimes|string|max:255',
             'description' => 'nullable|string',
-            'folder_id' => 'sometimes|exists:folders,id',
+            'folder_id'   => 'sometimes|exists:folders,id',
+            'owner_id'    => 'sometimes|nullable|exists:users,id',
         ]);
 
         $document->update($validated);
 
-        return response()->json($document->load(['folder', 'uploadedBy']));
+        return response()->json($document->load(['folder', 'uploadedBy', 'owner']));
     }
 
     public function destroy(Document $document)
     {
         $disk = Storage::disk('fildas_docs');
 
-        // Delete physical file
         if ($document->file_path && $disk->exists($document->file_path)) {
             $disk->delete($document->file_path);
         }
 
-        // Delete database record
         $document->delete();
 
         return response()->json(['message' => 'Document deleted successfully']);
@@ -130,7 +149,6 @@ class DocumentController extends Controller
         $disk = Storage::disk('fildas_docs');
         $path = $document->file_path;
 
-        // sanitize
         $path = str_replace(['../', '..\\'], '', $path);
 
         if (!$path || !$disk->exists($path)) {
@@ -139,10 +157,8 @@ class DocumentController extends Controller
 
         $fullPath = $disk->path($path);
 
-        // Get mime type
         $mimeType = $document->mime_type ?? mime_content_type($fullPath) ?? 'application/octet-stream';
 
-        // 1) If already PDF or image -> stream inline
         if (str_starts_with($mimeType, 'image/') || $mimeType === 'application/pdf') {
             return response()->file($fullPath, [
                 'Content-Type'        => $mimeType,
@@ -150,12 +166,10 @@ class DocumentController extends Controller
             ]);
         }
 
-        // 2) If DOC/DOCX/etc -> convert to PDF once, then stream that
         if (
-            $mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || // docx
-            $mimeType === 'application/msword'                                                          // doc
+            $mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+            $mimeType === 'application/msword'
         ) {
-            // if we already have a preview PDF, reuse it
             if ($document->preview_path && $disk->exists($document->preview_path)) {
                 $previewFullPath = $disk->path($document->preview_path);
 
@@ -165,13 +179,11 @@ class DocumentController extends Controller
                 ]);
             }
 
-            // else generate preview
             $previewRelPath = $this->convertDocxToPdf($disk, $fullPath);
             if (!$previewRelPath || !$disk->exists($previewRelPath)) {
                 abort(500, 'Failed to generate preview PDF');
             }
 
-            // save path on document for next time
             $document->preview_path = $previewRelPath;
             $document->save();
 
@@ -183,7 +195,6 @@ class DocumentController extends Controller
             ]);
         }
 
-        // 3) everything else: normal download
         return response()->download($fullPath, $document->original_filename);
     }
 
@@ -193,19 +204,15 @@ class DocumentController extends Controller
      */
     protected function convertDocxToPdf($disk, string $fullInputPath): ?string
     {
-        // disk root, e.g. C:\...\Documents Database
         $root = config('filesystems.disks.fildas_docs.root');
 
-        // create previews/ directory under root
         $outputDir = $root . DIRECTORY_SEPARATOR . 'previews';
         if (!is_dir($outputDir)) {
             mkdir($outputDir, 0775, true);
         }
 
-        // LibreOffice executable path (adjust if different)
         $soffice = '"C:\Program Files\LibreOffice\program\soffice.exe"';
 
-        // run LibreOffice in headless mode
         $cmd = $soffice
             . ' --headless --convert-to pdf --outdir '
             . escapeshellarg($outputDir) . ' '
@@ -222,8 +229,7 @@ class DocumentController extends Controller
             return null;
         }
 
-        // LibreOffice writes PDF with same base filename in $outputDir
-        $baseName = pathinfo($fullInputPath, PATHINFO_FILENAME) . '.pdf';
+        $baseName    = pathinfo($fullInputPath, PATHINFO_FILENAME) . '.pdf';
         $pdfFullPath = $outputDir . DIRECTORY_SEPARATOR . $baseName;
 
         if (!file_exists($pdfFullPath)) {
@@ -231,24 +237,21 @@ class DocumentController extends Controller
             return null;
         }
 
-        // return relative path for Storage disk, e.g. "previews/file.pdf"
         return 'previews' . DIRECTORY_SEPARATOR . $baseName;
     }
 
-
     public function preview(Document $document)
     {
-        // Preview returns metadata + stream URL
         return response()->json([
-            'id' => $document->id,
-            'title' => $document->title,
-            'description' => $document->description,
+            'id'                => $document->id,
+            'title'             => $document->title,
+            'description'       => $document->description,
             'original_filename' => $document->original_filename,
-            'mime_type' => $document->mime_type,
-            'file_size' => $document->file_size,
-            'stream_url' => route('documents.stream', $document),
-            'created_at' => $document->created_at,
-            'updated_at' => $document->updated_at,
+            'mime_type'         => $document->mime_type,
+            'file_size'         => $document->file_size,
+            'stream_url'        => route('documents.stream', $document),
+            'created_at'        => $document->created_at,
+            'updated_at'        => $document->updated_at,
         ]);
     }
 
@@ -269,8 +272,8 @@ class DocumentController extends Controller
     public function statistics()
     {
         $stats = [
-            'total_documents' => Document::count(),
-            'total_size' => Document::sum('file_size'),
+            'total_documents'   => Document::count(),
+            'total_size'        => Document::sum('file_size'),
             'documents_by_type' => Document::selectRaw('mime_type, COUNT(*) as count')
                 ->groupBy('mime_type')
                 ->get(),

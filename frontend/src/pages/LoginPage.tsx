@@ -1,8 +1,12 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, setAuthToken } from "../lib/api";
+import { api } from "../lib/api";
 
-export default function LoginPage() {
+type LoginPageProps = {
+  onLoginSuccess: (token: string, user: any) => void;
+};
+
+export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -15,17 +19,15 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      // Call token-based API login
       const res = await api.post("/login", { email, password });
       const { token, user } = res.data;
 
-      // Save token for future API calls
-      setAuthToken(token);
-      localStorage.setItem("fildas_token", token);
+      // let App know login succeeded (it will save token + user and set isAuthenticated)
+      onLoginSuccess(token, user);
 
       console.log("Logged in user:", user);
 
-      // Redirect to dashboard
+      // go to dashboard
       navigate("/overview", { replace: true });
     } catch (err) {
       setError("Invalid credentials or server error.");

@@ -1,9 +1,9 @@
-// src/layouts/AppLayout.tsx
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import Sidebar from "../components/Sidebar";
 import TopNav from "../components/TopNav";
 import type { PageKey } from "../types/navigation";
+import { useCurrentUser } from "../lib/useCurrentUser";
 
 const pathToPageKey = (pathname: string): PageKey => {
   switch (pathname) {
@@ -29,6 +29,9 @@ function AppLayout() {
     pathToPageKey(location.pathname)
   );
 
+  const { user, loading } = useCurrentUser();
+  const isAdmin = !!user && user.role?.name === "Admin";
+
   useEffect(() => {
     setActivePage(pathToPageKey(location.pathname));
   }, [location.pathname]);
@@ -44,13 +47,35 @@ function AppLayout() {
     navigate(pageToPath[page]);
   };
 
+  const handleLogout = () => {
+    window.location.href = "/login";
+  };
+
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-950 text-slate-200">
+        Loading…
+      </div>
+    );
+  }
+
+  // If not logged in, redirect to login (simple guard)
+  if (!user) {
+    window.location.href = "/login";
+    return null;
+  }
+
   return (
-    <div className="h-screen flex flex-col bg-slate-950">
-      <TopNav />
+    <div className="flex h-screen flex-col bg-slate-950">
+      <TopNav onLogout={handleLogout} />
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar activePage={activePage} onNavigate={handleNavigate} />
-        <main className="flex-1 p-6 overflow-auto">
-          <Outlet />
+        <Sidebar
+          activePage={activePage}
+          onNavigate={handleNavigate}
+          isAdmin={isAdmin}
+        />
+        <main className="flex-1 overflow-auto p-6">
+          <Outlet context={{ user, isAdmin }} />
         </main>
       </div>
     </div>

@@ -6,6 +6,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use App\Models\User;
 
 class Document extends Model
 {
@@ -20,10 +21,11 @@ class Document extends Model
         'mime_type',
         'size_bytes',
         'department_id',
-        'uploaded_by',
-        'uploaded_at',
         'document_type_id',
         'folder_id',
+        'uploaded_by',
+        'owner_id',      // <-- added
+        'uploaded_at',
     ];
 
     protected $casts = [
@@ -47,6 +49,11 @@ class Document extends Model
     public function folder()
     {
         return $this->belongsTo(Folder::class);
+    }
+
+    public function owner()
+    {
+        return $this->belongsTo(User::class, 'owner_id');
     }
 
     public function getFileSizeFormattedAttribute()

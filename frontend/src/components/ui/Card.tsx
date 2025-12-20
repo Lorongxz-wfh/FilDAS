@@ -16,11 +16,16 @@ export function Card({
   ...props
 }: CardProps) {
   const base =
-    "relative rounded-md border border-slate-800 bg-slate-950/60 p-2 text-xs";
+    "relative rounded-md border bg-slate-950/60 p-2 text-xs transition-colors";
+
   const interactive = selectable
-    ? "transition-colors hover:border-sky-500 cursor-pointer"
+    ? "cursor-pointer hover:border-sky-500/70"
     : "";
-  const selectedCls = selected ? "ring-2 ring-sky-500" : "";
+
+  // Subtle selected state: change border + background, no outer ring glow
+  const selectedCls = selected
+    ? "border-sky-500 bg-slate-900"
+    : "border-slate-800";
 
   const cls = [base, interactive, selectedCls, className]
     .filter(Boolean)

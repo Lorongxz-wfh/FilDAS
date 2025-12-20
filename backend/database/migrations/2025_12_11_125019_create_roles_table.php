@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('roles', function (Blueprint $table) {
             $table->id();
-            $table->string('name'); // System Admin, QA Staff, Viewer
+            $table->string('name'); // System Admin, Staff, Viewer
             $table->string('description')->nullable();
             $table->timestamps();
         });

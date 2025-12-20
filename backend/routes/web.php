@@ -1,15 +1,12 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\Auth\AuthenticatedSessionController;
-
-// use App\Http\Controllers\DocumentController;
-
-// Route::get('/documents/{document}/preview', [DocumentController::class, 'preview']);
-
 
 Route::get('/', function () {
     return ['Laravel' => app()->version()];
 });
 
-require __DIR__.'/auth.php';
+// Dummy web login route to satisfy route('login') if anything redirects here.
+Route::get('/login', function () {
+    return response()->json(['message' => 'Web login not implemented'], 501);
+})->name('login');
