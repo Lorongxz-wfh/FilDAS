@@ -15,7 +15,7 @@ Route::get('/ping', function () {
     return response()->json(['message' => 'API is working']);
 });
 
-// Public auth routes (no auth:sanctum)
+// Public auth routes
 Route::post('/login', [AuthController::class, 'login']);
 Route::post('/register', [RegisteredUserController::class, 'store']);
 
@@ -25,7 +25,7 @@ Route::get('/documents/{document}/stream', [DocumentController::class, 'stream']
 Route::get('/documents/{document}/preview', [DocumentController::class, 'preview'])
     ->name('documents.preview');
 
-// Protected routes (require token via Sanctum)
+// Protected routes (require auth:sanctum)
 Route::middleware(['auth:sanctum'])->group(function () {
 
     Route::get('/user', function (Request $request) {
@@ -49,37 +49,51 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::patch('/departments/{department}', [DepartmentController::class, 'update']);
     Route::delete('/departments/{department}', [DepartmentController::class, 'destroy']);
 
-    // Folders (regular)
+    // Folders
     Route::get('/folders', [FolderController::class, 'index']);
     Route::post('/folders', [FolderController::class, 'store']);
 
-    // SHARED folders (used by SharedFilesPage)
+    // SHARED folders (used by SharedFilesPage) – MUST be before /folders/{folder}
     Route::get('/folders/shared', [ShareController::class, 'sharedFolders']);
+    Route::get('/folders/shared/search', [ShareController::class, 'searchSharedFolders']);
 
+    // Regular folder-by-id routes
     Route::get('/folders/{folder}', [FolderController::class, 'show']);
     Route::put('/folders/{folder}', [FolderController::class, 'update']);
     Route::patch('/folders/{folder}', [FolderController::class, 'update']);
     Route::delete('/folders/{folder}', [FolderController::class, 'destroy']);
 
-    // Documents (full CRUD)
+    // Folder actions
+    Route::get('/folders/{folder}/download', [FolderController::class, 'download'])
+        ->name('folders.download');
+    Route::post('/folders/{folder}/move', [FolderController::class, 'move']);
+    Route::post('/folders/{folder}/copy', [FolderController::class, 'copy']);
+    Route::get('/folders/{folder}/activity', [FolderController::class, 'activity']);
+
+    // Documents
     Route::get('/documents', [DocumentController::class, 'index']);
     Route::post('/documents', [DocumentController::class, 'store']);
 
-    // SHARED documents (used by SharedFilesPage)
+    // SHARED documents (used by SharedFilesPage) – MUST be before /documents/{document}
     Route::get('/documents/shared', [ShareController::class, 'sharedDocuments']);
+    Route::get('/documents/shared/search', [ShareController::class, 'searchSharedDocuments']);
 
+    // Regular document-by-id routes
     Route::get('/documents/{document}', [DocumentController::class, 'show']);
     Route::put('/documents/{document}', [DocumentController::class, 'update']);
     Route::patch('/documents/{document}', [DocumentController::class, 'update']);
     Route::delete('/documents/{document}', [DocumentController::class, 'destroy']);
 
-    // Document actions (protected)
+    // Document actions
     Route::get('/documents/{document}/download', [DocumentController::class, 'download'])
         ->name('documents.download');
+    Route::post('/documents/{document}/move', [DocumentController::class, 'move']);
+    Route::post('/documents/{document}/copy', [DocumentController::class, 'copy']);
+    Route::get('/documents/{document}/activity', [DocumentController::class, 'activity']);
     Route::get('/documents/statistics/summary', [DocumentController::class, 'statistics']);
 
     // Sharing routes
-    Route::get('/shares', [ShareController::class, 'index']); // shared TO me
+    Route::get('/shares', [ShareController::class, 'index']);
     Route::get('/items/{type}/{id}/shares', [ShareController::class, 'itemShares']);
     Route::post('/shares', [ShareController::class, 'store']);
     Route::delete('/shares/{share}', [ShareController::class, 'destroy']);

@@ -8,6 +8,7 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 
+
 class User extends Authenticatable
 {
     use HasApiTokens, HasFactory, Notifiable, SoftDeletes;
@@ -68,15 +69,23 @@ class User extends Authenticatable
     /**
      * Convenience helpers.
      */
+    // app/Models/User.php
+
+    public function isSuperAdmin(): bool
+    {
+        return (int) $this->role_id === 1;
+    }
+
     public function isAdmin(): bool
     {
-        return optional($this->role)->name === 'Admin';
+        return (int) $this->role_id === 2;
     }
 
     public function isStaff(): bool
     {
-        return optional($this->role)->name === 'Staff';
+        return (int) $this->role_id === 3;
     }
+
 
     public function ownedDepartments()
     {
@@ -103,5 +112,14 @@ class User extends Authenticatable
     public function incomingShares()
     {
         return $this->hasMany(Share::class, 'target_user_id');
+    }
+
+    public function getEffectiveStatusAttribute(): string
+    {
+        if ($this->trashed() || $this->status === 'disabled') {
+            return 'inactive';
+        }
+
+        return 'active';
     }
 }

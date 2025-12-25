@@ -9,6 +9,7 @@ type Props = {
   formatSize: (bytes: number) => string;
   onClickItem: (item: Item) => void;
   onDoubleClickItem: (item: Item) => void;
+  onDownload?: (item: Item) => void;
   onRename: (item: Item) => void;
   onDelete: (item: Item) => void;
 };

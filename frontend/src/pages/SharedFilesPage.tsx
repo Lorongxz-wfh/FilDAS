@@ -5,6 +5,9 @@ import { useOutletContext } from "react-router-dom";
 import { Button } from "../components/ui/Button";
 import { DetailsPanel } from "../components/documents/DetailsPanel";
 import type { Item, DocumentRow as BaseDocumentRow } from "../types/documents";
+import { Card } from "../components/ui/Card";
+import { IconButton } from "../components/ui/IconButton";
+import { DropdownMenu } from "../components/ui/DropdownMenu";
 
 type LayoutContext = {
   user: {
@@ -37,43 +40,155 @@ type SharedFolder = {
 };
 
 export default function SharedFilesPage() {
-  const { user } = useOutletContext<LayoutContext>();
+  const { user, isAdmin } = useOutletContext<LayoutContext>();
 
-  // breadcrumb stack instead of single folder
+  // ---------- navigation state (breadcrumbs, current context) ----------
+
   const [folderPath, setFolderPath] = useState<SharedFolder[]>([]);
-  const currentFolder = folderPath.length
-    ? folderPath[folderPath.length - 1]
-    : null;
+  const currentFolder =
+    folderPath.length > 0 ? folderPath[folderPath.length - 1] : null;
 
-  const [folderDocs, setFolderDocs] = useState<DocumentRow[]>([]);
-  const [folderChildren, setFolderChildren] = useState<SharedFolder[]>([]);
+  // ---------- raw data from API (non‑search) ----------
 
-  const [documents, setDocuments] = useState<DocumentRow[]>([]);
   const [folders, setFolders] = useState<SharedFolder[]>([]);
+  const [documents, setDocuments] = useState<DocumentRow[]>([]);
+  const [folderChildren, setFolderChildren] = useState<SharedFolder[]>([]);
+  const [folderDocs, setFolderDocs] = useState<DocumentRow[]>([]);
+  const [allSharedDocs, setAllSharedDocs] = useState<DocumentRow[]>([]);
+
+  // ---------- search state (input, debounce, results) ----------
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [searchResultsFolders, setSearchResultsFolders] = useState<
+    SharedFolder[]
+  >([]);
+  const [searchResultsDocs, setSearchResultsDocs] = useState<DocumentRow[]>([]);
+
+  // ---------- UI state (loading, errors, view/sort) ----------
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [sortMode, setSortMode] = useState<SortMode>("recent");
-  const [searchQuery, setSearchQuery] = useState("");
+
+  // ---------- selection / details / preview state ----------
 
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  // load contents of a shared folder (children + files)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  const [detailsWidth, setDetailsWidth] = useState(320); // px
+
+  // ---------- data loading helpers ----------
+
+  const loadTopLevelShared = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const [docsRes, foldersRes] = await Promise.all([
+        api.get("/documents/shared"),
+        api.get("/folders/shared"),
+      ]);
+
+      const foldersRaw = (foldersRes.data ?? []) as any[];
+      const docsData = (docsRes.data ?? []) as any[];
+
+      const foldersData: SharedFolder[] = foldersRaw.map((f) => ({
+        id: f.id,
+        name: f.name,
+        parent_id: f.parentid ?? null,
+        department_id: f.departmentid ?? null,
+        department_name: f.departmentname ?? null,
+        owner_id: f.ownerid ?? null,
+        owner_name: f.ownername ?? null,
+        permission: f.permission,
+      }));
+
+      const mappedAllDocs: DocumentRow[] = docsData.map((d) => ({
+        id: d.id,
+        title: d.title,
+        original_filename: d.originalfilename,
+        mime_type: d.mimetype,
+        size_bytes: d.sizebytes,
+        uploaded_at: d.uploadedat,
+        last_opened_at: d.lastopenedat ?? null,
+        folder_id: d.folderid ?? null,
+        department_id: d.departmentid,
+        folder_name: d.foldername ?? null,
+        department_name: d.departmentname ?? null,
+        owner_id: d.ownerid ?? null,
+        owner_name: d.ownername ?? null,
+        share_permission: d.sharepermission,
+      }));
+
+      setAllSharedDocs(mappedAllDocs);
+      setDocuments(mappedAllDocs.filter((d) => !d.folder_id));
+      setFolders(foldersData);
+      setFolderChildren([]);
+      setFolderDocs([]);
+      setFolderPath([]);
+      setSelectedItem(null);
+      setPreviewUrl(null);
+    } catch (e) {
+      console.error(e);
+      setError("Failed to load shared files.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const loadSharedFolderContents = async (folder: SharedFolder) => {
     setLoading(true);
     setError(null);
+
     try {
       const [subFoldersRes, docsRes] = await Promise.all([
-        api.get("/folders/shared", { params: { parent_id: folder.id } }),
-        api.get("/documents/shared", { params: { folder_id: folder.id } }),
+        api.get("/folders/shared", {
+          params: { parent_id: folder.id },
+        }),
+        api.get("/documents/shared", {
+          params: { folder_id: folder.id },
+        }),
       ]);
 
-      const subFolders: SharedFolder[] =
-        subFoldersRes.data.data ?? subFoldersRes.data;
-      const docs: DocumentRow[] = docsRes.data.data ?? docsRes.data;
+      const subFoldersRaw = (subFoldersRes.data?.data ??
+        subFoldersRes.data ??
+        []) as any[];
+
+      const docsData = (docsRes.data?.data ?? docsRes.data ?? []) as any[];
+
+      const subFolders: SharedFolder[] = subFoldersRaw.map((f) => ({
+        id: f.id,
+        name: f.name,
+        parent_id: f.parentid ?? null,
+        department_id: f.departmentid ?? null,
+        department_name: f.departmentname ?? null,
+        owner_id: f.ownerid ?? null,
+        owner_name: f.ownername ?? null,
+        permission: f.permission,
+      }));
+
+      const docs: DocumentRow[] = docsData.map((d) => ({
+        id: d.id,
+        title: d.title,
+        original_filename: d.originalfilename,
+        mime_type: d.mimetype,
+        size_bytes: d.sizebytes,
+        uploaded_at: d.uploadedat,
+        last_opened_at: d.lastopenedat ?? null,
+        folder_id: d.folderid ?? null,
+        department_id: d.departmentid,
+        folder_name: d.foldername ?? null,
+        department_name: d.departmentname ?? null,
+        owner_id: d.ownerid ?? null,
+        owner_name: d.ownername ?? null,
+        share_permission: d.sharepermission,
+      }));
 
       setFolderChildren(subFolders);
       setFolderDocs(docs);
@@ -87,68 +202,106 @@ export default function SharedFilesPage() {
     }
   };
 
-  // load top-level shared items
-  const loadTopLevelShared = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [docsRes, foldersRes] = await Promise.all([
-        api.get("/documents/shared"),
-        api.get("/folders/shared"),
-      ]);
+  // ---------- effects ----------
 
-      const foldersData = (foldersRes.data ?? []) as SharedFolder[];
-      const docsData = (docsRes.data ?? []) as DocumentRow[];
-
-      // Top-level docs: only those not in any folder
-      const topLevelDocsRaw = docsData.filter((d) => !d.folder_id);
-
-      const mappedDocs: DocumentRow[] = topLevelDocsRaw.map((d) => ({
-        id: d.id,
-        title: d.title,
-        original_filename: d.original_filename,
-        mime_type: d.mime_type,
-        size_bytes: d.size_bytes,
-        uploaded_at: d.uploaded_at,
-        last_opened_at: d.last_opened_at ?? null,
-        folder_id: d.folder_id ?? null,
-        department_id: d.department_id,
-        folder_name: d.folder_name ?? null,
-        department_name: d.department_name ?? null,
-        owner_id: d.owner_id ?? null,
-        owner_name: d.owner_name ?? null,
-        share_permission: d.share_permission,
-      }));
-
-      setDocuments(mappedDocs);
-      setFolders(foldersData);
-    } catch (e) {
-      console.error(e);
-      setError("Failed to load shared files.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // initial load
   useEffect(() => {
     loadTopLevelShared();
   }, []);
 
-  const filteredSortedDocs = useMemo(() => {
-    const sourceDocs = currentFolder ? folderDocs : documents;
-    let list = [...sourceDocs];
+  // debounce search
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim());
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [searchQuery]);
 
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
+  // preview (keep simple: just use stream endpoint; no activity here)
+  useEffect(() => {
+    const loadPreview = async () => {
+      if (!detailsOpen || !selectedItem || selectedItem.kind !== "file") {
+        setPreviewUrl(null);
+        setPreviewLoading(false);
+        return;
+      }
+
+      const doc = selectedItem.data as DocumentRow;
+      const mime = doc.mime_type;
+      if (
+        !mime.startsWith("image/") &&
+        mime !== "application/pdf" &&
+        !mime.includes("word") &&
+        !mime.includes("presentation")
+      ) {
+        setPreviewUrl(null);
+        setPreviewLoading(false);
+        return;
+      }
+
+      setPreviewLoading(true);
+      try {
+        const res = await api.get(`/documents/${doc.id}/preview`);
+        setPreviewUrl(res.data.streamurl ?? null);
+      } catch (e) {
+        console.error("Failed to load preview URL", e);
+        setPreviewUrl(null);
+      } finally {
+        setPreviewLoading(false);
+      }
+    };
+
+    loadPreview();
+  }, [detailsOpen, selectedItem]);
+
+  // ---------- derived data ----------
+
+  const visibleFolders = useMemo(() => {
+    const q = debouncedSearch.toLowerCase();
+    let source: SharedFolder[];
+
+    if (!currentFolder) {
+      // root
+      source = q
+        ? folders.filter((f) => f.name.toLowerCase().includes(q))
+        : folders.filter((f) => f.parent_id === null);
+    } else {
+      source = q
+        ? folderChildren.filter((f) => f.name.toLowerCase().includes(q))
+        : folderChildren;
+    }
+
+    const list = [...source];
+    list.sort((a, b) =>
+      a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+    );
+    return list;
+  }, [folders, folderChildren, currentFolder, debouncedSearch]);
+
+  const filteredSortedDocs = useMemo(() => {
+    const q = debouncedSearch.toLowerCase();
+    const hasSearch = q.length > 0;
+
+    let source: DocumentRow[];
+    if (!currentFolder) {
+      source = hasSearch ? allSharedDocs : documents;
+    } else {
+      source = folderDocs;
+    }
+
+    let list = [...source];
+
+    if (hasSearch) {
       list = list.filter((d) => {
         const name = (d.title || d.original_filename || "").toLowerCase();
         const dept = (d.department_name || "").toLowerCase();
         const owner = (d.owner_name || "").toLowerCase();
+        const folder = (d.folder_name || "").toLowerCase();
         return (
           name.includes(q) ||
           dept.includes(q) ||
           owner.includes(q) ||
-          (d.folder_name || "").toLowerCase().includes(q)
+          folder.includes(q)
         );
       });
     }
@@ -159,23 +312,36 @@ export default function SharedFilesPage() {
         const nb = (b.title || b.original_filename || "").toLowerCase();
         return na.localeCompare(nb);
       }
+
       if (sortMode === "ownerDept") {
         const da = (a.department_name || "").toLowerCase();
         const db = (b.department_name || "").toLowerCase();
-        if (da === db) {
-          const na = (a.title || a.original_filename || "").toLowerCase();
-          const nb = (b.title || b.original_filename || "").toLowerCase();
-          return na.localeCompare(nb);
-        }
-        return da.localeCompare(db);
+        if (da !== db) return da.localeCompare(db);
+        const oa = (a.owner_name || "").toLowerCase();
+        const ob = (b.owner_name || "").toLowerCase();
+        if (oa !== ob) return oa.localeCompare(ob);
+        const na = (a.title || a.original_filename || "").toLowerCase();
+        const nb = (b.title || b.original_filename || "").toLowerCase();
+        return na.localeCompare(nb);
       }
+
+      // recent
       const ta = new Date(a.uploaded_at).getTime();
       const tb = new Date(b.uploaded_at).getTime();
       return tb - ta;
     });
 
     return list;
-  }, [documents, folderDocs, currentFolder, searchQuery, sortMode]);
+  }, [
+    allSharedDocs,
+    documents,
+    folderDocs,
+    currentFolder,
+    debouncedSearch,
+    sortMode,
+  ]);
+
+  // ---------- helpers ----------
 
   const formatSize = (bytes: number) => {
     if (!bytes) return "0 B";
@@ -189,109 +355,176 @@ export default function SharedFilesPage() {
     return `${v.toFixed(1)} ${units[i]}`;
   };
 
-  // full preview on demand
-  const handleSelectDocument = (doc: DocumentRow) => {
-    const item: Item = { kind: "file", data: doc as any };
-    setSelectedItem(item);
-    setDetailsOpen(true);
-
-    const mime = doc.mime_type;
-    if (
-      mime.startsWith("image/") ||
-      mime === "application/pdf" ||
-      mime ===
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-      mime === "application/msword"
-    ) {
-      api
-        .get(`/documents/${doc.id}/preview`)
-        .then((res) => {
-          const url = res.data.stream_url as string;
-          setPreviewUrl(url);
-        })
-        .catch((e) => {
-          console.error("Failed to load preview URL", e);
-          setPreviewUrl(null);
-        });
-    } else {
-      setPreviewUrl(null);
-    }
-  };
-
-  const isOwner = (selectedItem?.data as any)?.owner_id === user.id;
-
-  // open folder (navigate into it) – push to path
-  const handleSelectFolder = (folder: SharedFolder) => {
-    const item: Item = { kind: "folder", data: folder as any };
-    setSelectedItem(item);
-    setDetailsOpen(true);
-    setPreviewUrl(null);
-    setFolderPath((prev) => [...prev, folder]);
-    loadSharedFolderContents(folder);
-  };
-
-  const handleBackToSharedList = () => {
-    setFolderPath([]);
-    setFolderChildren([]);
-    setFolderDocs([]);
-    setSelectedItem(null);
-    setPreviewUrl(null);
-    loadTopLevelShared();
-  };
-
-  const visibleFolders = currentFolder ? folderChildren : folders;
-
-  // visual selection helper
   const isSelected = (kind: Item["kind"], id: number) => {
     if (!selectedItem) return false;
     if (selectedItem.kind !== kind) return false;
     return (selectedItem.data as any).id === id;
   };
 
+  const handleSelectDocument = (doc: DocumentRow) => {
+    const item: Item = { kind: "file", data: doc as any };
+    setSelectedItem(item);
+    setDetailsOpen(true);
+  };
+
+  const handleSelectFolder = async (folder: SharedFolder) => {
+    setSelectedItem(null);
+    setDetailsOpen(false);
+    setPreviewUrl(null);
+    setSearchQuery("");
+
+    const chain: SharedFolder[] = [];
+    let cursor: SharedFolder | null = folder;
+    const all = folders.length > 0 ? folders : folderChildren;
+
+    while (cursor) {
+      chain.unshift(cursor);
+      cursor =
+        cursor.parent_id !== null
+          ? all.find((f) => f.id === cursor!.parent_id) || null
+          : null;
+    }
+
+    setFolderPath(chain);
+    await loadSharedFolderContents(folder);
+  };
+
+  const handleBackToSharedList = async () => {
+    setFolderPath([]);
+    setFolderChildren([]);
+    setFolderDocs([]);
+    setSelectedItem(null);
+    setPreviewUrl(null);
+    setSearchQuery("");
+    await loadTopLevelShared();
+  };
+
+  const handleDownloadSelected = async () => {
+    if (!selectedItem || selectedItem.kind !== "file") return;
+    const doc = selectedItem.data as DocumentRow;
+    try {
+      const res = await api.get(`/documents/${doc.id}/download`, {
+        responseType: "blob",
+      });
+      const blob = new Blob([res.data], {
+        type: doc.mime_type || "application/octet-stream",
+      });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = doc.original_filename || doc.title || "download";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to download file.");
+    }
+  };
+
+  const isEditor =
+    (currentFolder && currentFolder.permission === "editor") ||
+    (selectedItem &&
+      selectedItem.kind === "file" &&
+      (selectedItem.data as any).share_permission === "editor") ||
+    isAdmin;
+
+  const toolbarLabel =
+    selectedItem === null
+      ? "No item selected"
+      : selectedItem.kind === "folder"
+      ? "Folder selected"
+      : "File selected";
+
+  const selectedIsFileOrFolder =
+    selectedItem &&
+    (selectedItem.kind === "file" || selectedItem.kind === "folder");
+
+  // ---------- UI ----------
+
   return (
-    <div className="flex h-full flex-col gap-3">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="mb-1 text-2xl font-semibold text-white">
-            Shared files
-          </h1>
-          <p className="text-xs text-slate-400">
-            Files and folders other people have shared with you.
-          </p>
+    <div>
+      <h1 className="mb-2 text-2xl font-semibold text-white">Shared files</h1>
+
+      <main>
+        {/* toolbar */}
+        <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          {/* left: upload buttons disabled in shared view */}
+          <div className="flex h-8.5 items-center">
+            <div className="flex flex-wrap gap-2">
+              {currentFolder && (
+                <>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleBackToSharedList}
+                  >
+                    Back to shared root
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* right: selection + actions */}
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="mr-2 text-slate-500">{toolbarLabel}</span>
+            {selectedIsFileOrFolder && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Button size="xs" onClick={handleDownloadSelected}>
+                  Download
+                </Button>
+                {isEditor && (
+                  <>
+                    <Button size="xs" disabled>
+                      Rename
+                    </Button>
+                    <Button size="xs" disabled>
+                      Move
+                    </Button>
+                    <Button size="xs" disabled>
+                      Delete
+                    </Button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
         </div>
-      </header>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-        <div className="inline-flex rounded-md border border-slate-700 bg-slate-900">
-          <Button
-            size="xs"
-            variant={viewMode === "grid" ? "primary" : "ghost"}
-            className="rounded-none"
-            onClick={() => setViewMode("grid")}
-          >
-            Grid
-          </Button>
+        {/* view/sort/search */}
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2">
+            <div className="inline-flex rounded-md border border-slate-700 bg-slate-900">
+              <Button
+                size="xs"
+                variant={viewMode === "grid" ? "primary" : "ghost"}
+                className="rounded-none"
+                onClick={() => setViewMode("grid")}
+              >
+                Grid
+              </Button>
+              <Button
+                size="xs"
+                variant={viewMode === "list" ? "primary" : "ghost"}
+                className="rounded-none"
+                onClick={() => setViewMode("list")}
+              >
+                List
+              </Button>
+            </div>
 
-          <Button
-            size="xs"
-            variant={viewMode === "list" ? "primary" : "ghost"}
-            className="rounded-none"
-            onClick={() => setViewMode("list")}
-          >
-            List
-          </Button>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <select
-            className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200"
-            value={sortMode}
-            onChange={(e) => setSortMode(e.target.value as SortMode)}
-          >
-            <option value="alpha">Alphabetical</option>
-            <option value="recent">Recently opened</option>
-            <option value="ownerDept">File owner department</option>
-          </select>
+            <select
+              className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 focus:outline-none"
+              value={sortMode}
+              onChange={(e) => setSortMode(e.target.value as SortMode)}
+            >
+              <option value="alpha">Alphabetical</option>
+              <option value="recent">Recently opened</option>
+              <option value="ownerDept">File owner / department</option>
+            </select>
+          </div>
 
           <div className="flex items-center gap-2">
             <input
@@ -310,237 +543,326 @@ export default function SharedFilesPage() {
             </Button>
           </div>
         </div>
-      </div>
 
-      {/* Breadcrumbs */}
-      <div className="mb-2 flex items-center gap-2 text-xs text-slate-300">
-        {folderPath.length === 0 ? (
-          <span className="text-slate-400">Top-level shared items</span>
-        ) : (
-          <>
-            <button
-              className="text-slate-300 hover:text-sky-400"
-              onClick={handleBackToSharedList}
-            >
-              ← Back to shared list
-            </button>
-            <span className="text-slate-600">/</span>
-            {folderPath.map((folder, index) => (
-              <span key={folder.id} className="flex items-center gap-2">
-                {index > 0 && <span className="text-slate-600">/</span>}
-                <button
-                  className="text-slate-400 hover:text-sky-400"
-                  onClick={async () => {
-                    const newPath = folderPath.slice(0, index + 1);
-                    setFolderPath(newPath);
-                    setSelectedItem({
-                      kind: "folder",
-                      data: folder as any,
-                    });
-                    setDetailsOpen(true);
-                    setPreviewUrl(null);
-                    await loadSharedFolderContents(folder);
-                  }}
-                >
-                  {folder.name}
-                </button>
-              </span>
-            ))}
-          </>
-        )}
-      </div>
-
-      <div className="flex h-[calc(100vh-220px)] gap-3">
-        <section className="flex-1 overflow-auto rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-xs">
-          {loading ? (
-            <div className="flex h-full items-center justify-center">
-              <div className="h-6 w-6 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
-            </div>
-          ) : error ? (
-            <p className="text-xs text-red-400">{error}</p>
-          ) : folderPath.length === 0 &&
-            filteredSortedDocs.length === 0 &&
-            visibleFolders.length === 0 ? (
-            <p className="text-xs text-slate-500">No shared items.</p>
+        {/* breadcrumbs */}
+        <div className="mb-2 flex items-center gap-2 text-xs text-slate-300">
+          {folderPath.length === 0 ? (
+            <span className="mt-1 h-4.5 text-slate-400">
+              Top-level shared items
+            </span>
           ) : (
             <>
-              {visibleFolders.length > 0 && (
-                <div className="mb-4">
-                  <p className="mb-2 text-[11px] font-semibold uppercase text-slate-400">
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={handleBackToSharedList}
+              >
+                Back
+              </Button>
+              <span className="text-slate-600">/</span>
+              {folderPath.map((folder, index) => (
+                <span key={folder.id} className="flex items-center gap-1">
+                  {index > 0 && <span className="text-slate-600">/</span>}
+                  <button
+                    className="text-slate-300 hover:text-sky-400"
+                    onClick={async () => {
+                      const newPath = folderPath.slice(0, index + 1);
+                      setFolderPath(newPath);
+                      setSelectedItem(null);
+                      setDetailsOpen(false);
+                      setPreviewUrl(null);
+                      setSearchQuery("");
+                      await loadSharedFolderContents(folder);
+                    }}
+                  >
+                    {folder.name}
+                  </button>
+                </span>
+              ))}
+            </>
+          )}
+        </div>
+
+        {/* main content */}
+        <div className="flex h-[calc(100vh-260px)] gap-3">
+          <section
+            className="flex-1 overflow-auto rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-sm"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                setSelectedItem(null);
+                setPreviewUrl(null);
+              }
+            }}
+          >
+            {loading ? (
+              <div className="flex h-full items-center justify-center">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
+              </div>
+            ) : error ? (
+              <p className="text-xs text-red-400">{error}</p>
+            ) : folderPath.length === 0 &&
+              !debouncedSearch &&
+              filteredSortedDocs.length === 0 &&
+              visibleFolders.length === 0 ? (
+              <p className="text-xs text-slate-500">No shared items.</p>
+            ) : (
+              <>
+                {visibleFolders.length > 0 && (
+                  <>
+                    <p className="mb-2 text-[11px] font-semibold uppercase text-slate-400">
+                      {currentFolder
+                        ? `Subfolders in ${currentFolder.name}`
+                        : "Shared folders"}
+                    </p>
+                    {viewMode === "grid" ? (
+                      <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-5">
+                        {visibleFolders.map((folder) => (
+                          <Card
+                            key={folder.id}
+                            selectable
+                            selected={isSelected("folder", folder.id)}
+                            className="group cursor-pointer"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              setSelectedItem({
+                                kind: "folder",
+                                data: folder as any,
+                              });
+                            }}
+                            onDoubleClick={(e) => {
+                              e.preventDefault();
+                              handleSelectFolder(folder);
+                            }}
+                          >
+                            <div className="flex h-full flex-col justify-between">
+                              <div className="mb-2 flex items-start justify-between">
+                                <div className="text-[32px] leading-none">
+                                  📁
+                                </div>
+                                <DropdownMenu
+                                  trigger={
+                                    <IconButton
+                                      className="dropdown-root"
+                                      size="xs"
+                                      variant="ghost"
+                                    >
+                                      ⋮
+                                    </IconButton>
+                                  }
+                                >
+                                  <DropdownMenu.Item
+                                    onClick={() => {
+                                      setSelectedItem({
+                                        kind: "folder",
+                                        data: folder as any,
+                                      });
+                                      setDetailsOpen(true);
+                                    }}
+                                  >
+                                    Details
+                                  </DropdownMenu.Item>
+                                  <DropdownMenu.Item
+                                    onClick={() => handleSelectFolder(folder)}
+                                  >
+                                    Open
+                                  </DropdownMenu.Item>
+                                </DropdownMenu>
+                              </div>
+                              <div className="space-y-0.5">
+                                <p className="truncate text-xs text-slate-100">
+                                  {folder.name}
+                                </p>
+                                <p className="truncate text-[11px] text-slate-500">
+                                  {folder.department_name ||
+                                    "Unknown department"}
+                                </p>
+                              </div>
+                            </div>
+                          </Card>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mb-4 overflow-x-auto">
+                        <table className="min-w-full text-left text-xs">
+                          <thead className="border-b border-slate-800 text-[11px] uppercase text-slate-400">
+                            <tr>
+                              <th className="py-2 pr-3">Folder</th>
+                              <th className="py-2 pr-3">From department</th>
+                              <th className="py-2 pr-3">Owner</th>
+                              <th className="py-2 pr-3">Permission</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-800">
+                            {visibleFolders.map((folder) => (
+                              <tr
+                                key={folder.id}
+                                className={`cursor-pointer hover:bg-slate-800/60 ${
+                                  isSelected("folder", folder.id)
+                                    ? "bg-slate-800/80"
+                                    : ""
+                                }`}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  setSelectedItem({
+                                    kind: "folder",
+                                    data: folder as any,
+                                  });
+                                }}
+                                onDoubleClick={(e) => {
+                                  e.preventDefault();
+                                  handleSelectFolder(folder);
+                                }}
+                              >
+                                <td className="py-2 pr-3 text-slate-100">
+                                  {folder.name}
+                                </td>
+                                <td className="py-2 pr-3 text-slate-300">
+                                  {folder.department_name || "Unknown"}
+                                </td>
+                                <td className="py-2 pr-3 text-slate-400">
+                                  {folder.owner_name || "Unknown"}
+                                </td>
+                                <td className="py-2 pr-3 text-slate-400">
+                                  {folder.permission}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <p className="mb-2 text-[11px] font-semibold uppercase text-slate-400">
+                  {currentFolder
+                    ? `Files in ${currentFolder.name}`
+                    : "Shared files"}
+                </p>
+
+                {filteredSortedDocs.length === 0 ? (
+                  <p className="text-xs text-slate-500">
                     {currentFolder
-                      ? `Subfolders in ${currentFolder.name}`
-                      : "Shared folders"}
+                      ? "No files in this folder."
+                      : "No shared files."}
                   </p>
-                  {viewMode === "grid" ? (
-                    <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-5">
-                      {visibleFolders.map((folder) => (
-                        <button
-                          key={folder.id}
-                          type="button"
-                          className={`flex flex-col rounded-md border bg-slate-900/80 p-2 text-left hover:border-sky-500 ${
-                            isSelected("folder", folder.id)
-                              ? "border-sky-500 bg-slate-900"
-                              : "border-slate-800"
-                          }`}
+                ) : viewMode === "grid" ? (
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-5">
+                    {filteredSortedDocs.map((doc) => {
+                      const name = doc.title || doc.original_filename;
+                      const icon = doc.mime_type.startsWith("image/")
+                        ? "🖼️"
+                        : doc.mime_type.includes("presentation")
+                        ? "📽️"
+                        : doc.mime_type.includes("word")
+                        ? "📄"
+                        : doc.mime_type === "application/pdf"
+                        ? "📕"
+                        : "📁";
+
+                      const isViewerOnly =
+                        !isEditor ||
+                        (doc.share_permission &&
+                          doc.share_permission !== "editor");
+
+                      return (
+                        <Card
+                          key={doc.id}
+                          selectable
+                          selected={isSelected("file", doc.id)}
+                          className="group cursor-pointer"
                           onClick={(e) => {
                             e.preventDefault();
-                            const item: Item = {
-                              kind: "folder",
-                              data: folder as any,
-                            };
-                            setSelectedItem(item);
-                            setDetailsOpen(true);
-                            setPreviewUrl(null);
+                            setSelectedItem({ kind: "file", data: doc as any });
                           }}
                           onDoubleClick={(e) => {
                             e.preventDefault();
-                            handleSelectFolder(folder);
+                            handleSelectDocument(doc);
                           }}
                         >
-                          <div className="mb-2 flex h-16 items-center justify-center rounded bg-slate-800/80 text-[11px] text-slate-300">
-                            Folder
+                          <div className="flex h-full flex-col justify-between">
+                            <div className="mb-2 flex items-start justify-between">
+                              <div className="text-[32px] leading-none">
+                                {icon}
+                              </div>
+                              <DropdownMenu
+                                trigger={
+                                  <IconButton
+                                    className="dropdown-root"
+                                    size="xs"
+                                    variant="ghost"
+                                  >
+                                    ⋮
+                                  </IconButton>
+                                }
+                              >
+                                <DropdownMenu.Item
+                                  onClick={() => {
+                                    setSelectedItem({
+                                      kind: "file",
+                                      data: doc as any,
+                                    });
+                                    setDetailsOpen(true);
+                                  }}
+                                >
+                                  Details
+                                </DropdownMenu.Item>
+                                <DropdownMenu.Item
+                                  onClick={() => {
+                                    setSelectedItem({
+                                      kind: "file",
+                                      data: doc as any,
+                                    });
+                                    handleDownloadSelected();
+                                  }}
+                                >
+                                  Download
+                                </DropdownMenu.Item>
+                                {isViewerOnly ? null : (
+                                  <>
+                                    <DropdownMenu.Item>
+                                      Rename
+                                    </DropdownMenu.Item>
+                                    <DropdownMenu.Item>Move</DropdownMenu.Item>
+                                    <DropdownMenu.Item>
+                                      Delete
+                                    </DropdownMenu.Item>
+                                  </>
+                                )}
+                              </DropdownMenu>
+                            </div>
+                            <div className="space-y-0.5">
+                              <p className="truncate text-xs text-slate-100">
+                                {name}
+                              </p>
+                              <p className="truncate text-[11px] text-slate-500">
+                                {doc.owner_name || "Unknown owner"} ·{" "}
+                                {doc.department_name || "Unknown department"}
+                              </p>
+                              <p className="truncate text-[11px] text-slate-500">
+                                {formatSize(doc.size_bytes)} ·{" "}
+                                {new Date(doc.uploaded_at).toLocaleDateString()}
+                              </p>
+                            </div>
                           </div>
-                          <p className="truncate text-xs text-slate-100">
-                            {folder.name}
-                          </p>
-                          <p className="truncate text-[11px] text-slate-500">
-                            {folder.department_name || "Unknown department"}
-                          </p>
-                          <p className="truncate text-[11px] text-slate-500">
-                            Owner: {folder.owner_name || "Unknown"}
-                          </p>
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="mb-4 overflow-x-auto">
-                      <table className="min-w-full text-left text-xs">
-                        <thead className="border-b border-slate-800 text-[11px] uppercase text-slate-400">
-                          <tr>
-                            <th className="py-2 pr-3">Folder</th>
-                            <th className="py-2 pr-3">From department</th>
-                            <th className="py-2 pr-3">Owner</th>
-                            <th className="py-2 pr-3">Permission</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-800">
-                          {visibleFolders.map((folder) => (
-                            <tr
-                              key={folder.id}
-                              className={`cursor-pointer hover:bg-slate-800/60 ${
-                                isSelected("folder", folder.id)
-                                  ? "bg-slate-800/80"
-                                  : ""
-                              }`}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                const item: Item = {
-                                  kind: "folder",
-                                  data: folder as any,
-                                };
-                                setSelectedItem(item);
-                                setDetailsOpen(true);
-                                setPreviewUrl(null);
-                              }}
-                              onDoubleClick={(e) => {
-                                e.preventDefault();
-                                handleSelectFolder(folder);
-                              }}
-                            >
-                              <td className="py-2 pr-3 text-slate-100">
-                                {folder.name}
-                              </td>
-                              <td className="py-2 pr-3 text-slate-300">
-                                {folder.department_name || "Unknown"}
-                              </td>
-                              <td className="py-2 pr-3 text-slate-400">
-                                {folder.owner_name || "Unknown"}
-                              </td>
-                              <td className="py-2 pr-3 text-slate-400">
-                                {folder.permission}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <p className="mb-2 text-[11px] font-semibold uppercase text-slate-400">
-                {currentFolder
-                  ? `Files in ${currentFolder.name}`
-                  : "Shared files"}
-              </p>
-              {filteredSortedDocs.length === 0 ? (
-                <p className="text-xs text-slate-500">
-                  {currentFolder
-                    ? "No files in this folder."
-                    : "No shared files."}
-                </p>
-              ) : viewMode === "grid" ? (
-                <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-5">
-                  {filteredSortedDocs.map((doc) => {
-                    const name = doc.title || doc.original_filename;
-                    return (
-                      <button
-                        key={doc.id}
-                        type="button"
-                        className={`flex flex-col rounded-md border bg-slate-900/80 p-2 text-left hover:border-sky-500 ${
-                          isSelected("file", doc.id)
-                            ? "border-sky-500 bg-slate-900"
-                            : "border-slate-800"
-                        }`}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          const item: Item = {
-                            kind: "file",
-                            data: doc as any,
-                          };
-                          setSelectedItem(item);
-                          setDetailsOpen(true);
-                          setPreviewUrl(null);
-                        }}
-                        onDoubleClick={(e) => {
-                          e.preventDefault();
-                          handleSelectDocument(doc);
-                        }}
-                      >
-                        <div className="mb-2 flex h-16 items-center justify-center rounded bg-slate-800/80 text-[10px] text-slate-500">
-                          {doc.mime_type}
-                        </div>
-                        <p className="truncate text-xs text-slate-100">
-                          {name}
-                        </p>
-                        <p className="truncate text-[11px] text-slate-500">
-                          {doc.department_name || "Unknown department"}
-                        </p>
-                        <p className="truncate text-[11px] text-slate-500">
-                          Owner: {doc.owner_name || "Unknown"}
-                        </p>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-left text-xs">
-                    <thead className="border-b border-slate-800 text-[11px] uppercase text-slate-400">
-                      <tr>
-                        <th className="py-2 pr-3">Name</th>
-                        <th className="py-2 pr-3">From department</th>
-                        <th className="py-2 pr-3">Owner</th>
-                        <th className="py-2 pr-3">Folder</th>
-                        <th className="py-2 pr-3">Type</th>
-                        <th className="py-2 pr-3">Size</th>
-                        <th className="py-2 pr-3">Uploaded</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800">
-                      {filteredSortedDocs.map((doc) => {
-                        const name = doc.title || doc.original_filename;
-                        return (
+                        </Card>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-left text-xs">
+                      <thead className="border-b border-slate-800 text-[11px] uppercase text-slate-400">
+                        <tr>
+                          <th className="py-2 pr-3">File</th>
+                          <th className="py-2 pr-3">Owner</th>
+                          <th className="py-2 pr-3">Department</th>
+                          <th className="py-2 pr-3">Size</th>
+                          <th className="py-2 pr-3">Uploaded</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800">
+                        {filteredSortedDocs.map((doc) => (
                           <tr
                             key={doc.id}
                             className={`cursor-pointer hover:bg-slate-800/60 ${
@@ -550,31 +872,24 @@ export default function SharedFilesPage() {
                             }`}
                             onClick={(e) => {
                               e.preventDefault();
-                              const item: Item = {
+                              setSelectedItem({
                                 kind: "file",
                                 data: doc as any,
-                              };
-                              setSelectedItem(item);
-                              setDetailsOpen(true);
-                              setPreviewUrl(null);
+                              });
                             }}
                             onDoubleClick={(e) => {
                               e.preventDefault();
                               handleSelectDocument(doc);
                             }}
                           >
-                            <td className="py-2 pr-3 text-slate-100">{name}</td>
-                            <td className="py-2 pr-3 text-slate-300">
-                              {doc.department_name || "Unknown"}
+                            <td className="py-2 pr-3 text-slate-100">
+                              {doc.title || doc.original_filename}
                             </td>
-                            <td className="py-2 pr-3 text-slate-400">
+                            <td className="py-2 pr-3 text-slate-300">
                               {doc.owner_name || "Unknown"}
                             </td>
-                            <td className="py-2 pr-3 text-slate-400">
-                              {doc.folder_name || "—"}
-                            </td>
-                            <td className="py-2 pr-3 text-slate-400">
-                              {doc.mime_type}
+                            <td className="py-2 pr-3 text-slate-300">
+                              {doc.department_name || "Unknown"}
                             </td>
                             <td className="py-2 pr-3 text-slate-400">
                               {formatSize(doc.size_bytes)}
@@ -583,32 +898,48 @@ export default function SharedFilesPage() {
                               {new Date(doc.uploaded_at).toLocaleDateString()}
                             </td>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </>
-          )}
-        </section>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
 
-        <DetailsPanel
-          open={detailsOpen && !!selectedItem}
-          selectedItem={selectedItem}
-          previewUrl={previewUrl}
-          formatSize={formatSize}
-          onClose={() => setDetailsOpen(false)}
-          canEditAccess={isOwner}
-          onAccessChanged={async () => {
-            if (currentFolder) {
-              await loadSharedFolderContents(currentFolder);
-            } else {
-              await loadTopLevelShared();
-            }
-          }}
-        />
-      </div>
+          {/* details panel */}
+          <section className={`hidden w-[${detailsWidth}px] shrink-0 lg:block`}>
+            <DetailsPanel
+              open={detailsOpen}
+              selectedItem={selectedItem}
+              previewUrl={previewUrl}
+              previewLoading={previewLoading}
+              formatSize={formatSize}
+              onClose={() => setDetailsOpen(false)}
+              width={detailsWidth}
+              onResizeStart={() => {
+                const startX =
+                  window.event instanceof MouseEvent ? window.event.clientX : 0;
+                const startWidth = detailsWidth;
+
+                const onMove = (e: MouseEvent) => {
+                  const delta = startX - e.clientX;
+                  const next = Math.min(Math.max(startWidth + delta, 260), 520);
+                  setDetailsWidth(next);
+                };
+
+                const onUp = () => {
+                  window.removeEventListener("mousemove", onMove);
+                  window.removeEventListener("mouseup", onUp);
+                };
+
+                window.addEventListener("mousemove", onMove);
+                window.addEventListener("mouseup", onUp);
+              }}
+            />
+          </section>
+        </div>
+      </main>
     </div>
   );
 }

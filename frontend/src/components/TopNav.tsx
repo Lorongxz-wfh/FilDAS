@@ -52,7 +52,7 @@ export default function TopNav({ onLogout }: TopNavProps) {
   return (
     <header className="h-14 border-b border-slate-800 bg-slate-950/80 backdrop-blur flex items-center justify-between px-4">
       <div className="flex items-center gap-2">
-        <span className="text-sm font-semibold text-sky-400">FilDAS Admin</span>
+        <span className="text-sm font-semibold text-sky-400">FilDAS</span>
       </div>
 
       <div
@@ -75,7 +75,7 @@ export default function TopNav({ onLogout }: TopNavProps) {
           }
           rightIcon={<span className="text-[10px]">{open ? "▴" : "▾"}</span>}
         >
-          Admin
+          Current User Role
         </Button>
 
         {open && (

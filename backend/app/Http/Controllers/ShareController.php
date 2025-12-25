@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Models\Document;
 use App\Models\Folder;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class ShareController extends Controller
 {
@@ -28,7 +29,6 @@ class ShareController extends Controller
     /**
      * GET /items/{type}/{id}/shares
      * List people who have access to a specific document or folder.
-     * type = "document" | "folder"
      */
     public function itemShares(Request $request, string $type, int $id)
     {
@@ -36,13 +36,93 @@ class ShareController extends Controller
             return response()->json(['error' => 'Invalid type'], 400);
         }
 
-        $column = $type === 'document' ? 'document_id' : 'folder_id';
+        $directShares = collect();
+        $inheritedShares = collect();
 
-        $shares = Share::with(['owner', 'targetUser'])
-            ->where($column, $id)
-            ->get();
+        if ($type === 'document') {
+            // Direct document shares
+            $directShares = Share::with(['owner', 'targetUser'])
+                ->where('document_id', $id)
+                ->get()
+                ->map(function (Share $share) {
+                    $share->inherited_from = null;
+                    return $share;
+                });
 
-        return response()->json($shares);
+            // Inherited from ancestor folders
+            $document = Document::find($id);
+            if ($document && $document->folder_id) {
+                $folderId = $document->folder_id;
+
+                while ($folderId) {
+                    $folderShares = Share::with(['owner', 'targetUser'])
+                        ->where('folder_id', $folderId)
+                        ->get()
+                        ->map(function (Share $share) use ($folderId) {
+                            $share->inherited_from = [
+                                'type' => 'folder',
+                                'id'   => $folderId,
+                            ];
+                            return $share;
+                        });
+
+                    $inheritedShares = $inheritedShares->concat($folderShares);
+
+                    $folder = Folder::find($folderId);
+                    $folderId = $folder ? $folder->parent_id : null;
+                }
+            }
+        } else { // folder
+            // Direct folder shares
+            $directShares = Share::with(['owner', 'targetUser'])
+                ->where('folder_id', $id)
+                ->get()
+                ->map(function (Share $share) {
+                    $share->inherited_from = null;
+                    return $share;
+                });
+
+            // Inherited from ancestor folders
+            $folder = Folder::find($id);
+            if ($folder) {
+                $parentId = $folder->parent_id;
+
+                while ($parentId) {
+                    $parentShares = Share::with(['owner', 'targetUser'])
+                        ->where('folder_id', $parentId)
+                        ->get()
+                        ->map(function (Share $share) use ($parentId) {
+                            $share->inherited_from = [
+                                'type' => 'folder',
+                                'id'   => $parentId,
+                            ];
+                            return $share;
+                        });
+
+                    $inheritedShares = $inheritedShares->concat($parentShares);
+
+                    $parent = Folder::find($parentId);
+                    $parentId = $parent ? $parent->parent_id : null;
+                }
+            }
+        }
+
+        $allShares = $directShares
+            ->concat($inheritedShares)
+            ->unique(function (Share $s) {
+                return implode('-', [
+                    $s->owner_id,
+                    $s->target_user_id,
+                    $s->document_id,
+                    $s->folder_id,
+                    $s->permission,
+                    $s->inherited_from['type'] ?? 'direct',
+                    $s->inherited_from['id'] ?? 'direct',
+                ]);
+            })
+            ->values();
+
+        return response()->json($allShares);
     }
 
     /**
@@ -87,38 +167,43 @@ class ShareController extends Controller
             ]
         );
 
+        // LOG ACTIVITY
+        $item = $share->document_id ? Document::find($share->document_id) : Folder::find($share->folder_id);
+        if ($item) {
+            \App\Helpers\ActivityLogger::log($item, 'shared', 'Shared with ' . $targetUser->email);
+        }
+
         return response()->json($share->load(['owner', 'targetUser']), 201);
     }
 
     /**
      * GET /documents/shared
-     * Optional query: folder_id
+     * Used by SharedFilesPage.tsx - supports ?folder_id= param
      */
     public function sharedDocuments(Request $request)
     {
-        $user     = $request->user();
+        $user = $request->user();
         $folderId = $request->query('folder_id');
 
-        // 1) IDs of documents shared directly to this user
+        // 1) Direct document shares to this user
         $directDocIds = Share::where('target_user_id', $user->id)
             ->whereNotNull('document_id')
             ->pluck('document_id')
             ->toArray();
 
-        // 2) Root shared folder IDs
+        // 2) All shared folder IDs (roots + descendants)
         $rootSharedFolderIds = Share::where('target_user_id', $user->id)
             ->whereNotNull('folder_id')
             ->pluck('folder_id')
             ->toArray();
 
-        // 3) Collect all descendant folder IDs (including roots)
         $allSharedFolderIds = $rootSharedFolderIds;
 
         if (!empty($rootSharedFolderIds)) {
             $queue = $rootSharedFolderIds;
 
             while (!empty($queue)) {
-                $childIds = \App\Models\Folder::whereIn('parent_id', $queue)
+                $childIds = Folder::whereIn('parent_id', $queue)
                     ->pluck('id')
                     ->toArray();
 
@@ -129,113 +214,277 @@ class ShareController extends Controller
                 }
 
                 $allSharedFolderIds = array_merge($allSharedFolderIds, $childIds);
-                $queue              = $childIds;
+                $queue = $childIds;
             }
         }
 
-        // 4) Base documents query (direct docs OR docs in any shared/descendant folder)
-        $docsQuery = \App\Models\Document::with(['folder', 'department', 'owner'])
+        // 3) Base query: direct docs OR docs in shared folders
+        $docsQuery = Document::with(['folder.department', 'uploadedBy'])
             ->where(function ($q) use ($directDocIds, $allSharedFolderIds) {
                 if (!empty($directDocIds)) {
                     $q->whereIn('id', $directDocIds);
                 }
-
                 if (!empty($allSharedFolderIds)) {
                     $q->orWhereIn('folder_id', $allSharedFolderIds);
                 }
             });
 
-        // When browsing inside a specific shared folder
+        // Filter by specific folder when navigating
         if ($folderId !== null) {
             $docsQuery->where('folder_id', (int) $folderId);
         }
 
-        $documents = $docsQuery->get();
+        $documents = $docsQuery->orderBy('created_at', 'desc')->get();
 
-        $allDocs = $documents->map(function (\App\Models\Document $doc) {
+        // No Document::shares() relation; default permission to viewer
+        $mapped = $documents->map(function ($doc) {
             return [
-                'id'                => $doc->id,
-                'title'             => $doc->title,
-                'original_filename' => $doc->original_filename,
-                'mime_type'         => $doc->mime_type,
-                'size_bytes'        => $doc->size_bytes,
-                'uploaded_at'       => optional($doc->uploaded_at)->toIso8601String(),
-
-                'folder_id'         => $doc->folder_id,
-                'folder_name'       => optional($doc->folder)->name,
-
-                'department_id'     => $doc->department_id,
-                'department_name'   => optional($doc->department)->name,
-
-                'owner_id'          => $doc->owner_id,
-                'owner_name'        => optional($doc->owner)->name,
+                'id' => $doc->id,
+                'title' => $doc->title,
+                'originalfilename' => $doc->original_filename,
+                'mimetype' => $doc->mime_type,
+                'sizebytes' => $doc->file_size ?? $doc->size_bytes ?? 0,
+                'uploadedat' => $doc->created_at->toISOString(),
+                'lastopenedat' => $doc->last_opened_at?->toISOString() ?? null,
+                'folderid' => $doc->folder_id,
+                'foldername' => $doc->folder?->name ?? null,
+                'departmentid' => $doc->folder?->department_id ?? $doc->department_id,
+                'departmentname' => $doc->folder?->department?->name ?? null,
+                'ownerid' => $doc->uploaded_by ?? $doc->owner_id,
+                'ownername' => $doc->uploadedBy?->name ?? $doc->owner?->name ?? 'Unknown',
+                'sharepermission' => 'viewer',
             ];
-        })->values();
+        });
 
-        return response()->json($allDocs);
+        return response()->json($mapped);
     }
-
-
 
     /**
      * GET /folders/shared
-     * Optional query: parent_id
+     * Used by SharedFilesPage.tsx - supports ?parent_id= param
      */
     public function sharedFolders(Request $request)
     {
-        $user     = $request->user();
-        $parentId = $request->query('parent_id'); // can be null
+        $user = $request->user();
+        $parentId = $request->query('parent_id');
 
-        // 1) Folders explicitly shared to this user
-        $directShares = Share::with(['folder.department', 'owner'])
-            ->where('target_user_id', $user->id)
+        // 1) Direct folder shares to this user
+        $directShares = Share::where('target_user_id', $user->id)
             ->whereNotNull('folder_id')
             ->get();
 
-        $sharedFolderIds = $directShares->pluck('folder_id')->toArray();
+        if ($directShares->isEmpty()) {
+            return response()->json([]);
+        }
 
-        // 2) Base query: folders that are either
-        //    - directly shared, OR
-        //    - children of a shared folder (inherit access)
-        $foldersQuery = Folder::with('department')
-            ->where(function ($q) use ($sharedFolderIds) {
-                if (!empty($sharedFolderIds)) {
-                    $q->whereIn('id', $sharedFolderIds)
-                        ->orWhereIn('parent_id', $sharedFolderIds);
-                }
-            });
+        $rootSharedFolderIds = $directShares->pluck('folder_id')->all();
 
-        // 3) Filter by parent_id for navigation
+        // 2) Build permission inheritance map
+        $folderPermissionById = [];
+        foreach ($directShares as $share) {
+            $folderPermissionById[$share->folder_id] = $share->permission;
+        }
+
+        // BFS to inherit permissions to children
+        $queue = $rootSharedFolderIds;
+        while (!empty($queue)) {
+            $childIds = Folder::whereIn('parent_id', $queue)
+                ->pluck('id')
+                ->toArray();
+
+            $childIds = array_values(array_diff($childIds, array_keys($folderPermissionById)));
+
+            if (empty($childIds)) {
+                break;
+            }
+
+            foreach ($childIds as $childId) {
+                $parentIdForChild = Folder::where('id', $childId)->value('parent_id');
+                $parentPerm = $folderPermissionById[$parentIdForChild] ?? 'viewer';
+                $folderPermissionById[$childId] = $parentPerm;
+            }
+
+            $queue = $childIds;
+        }
+
+        $allSharedFolderIds = array_keys($folderPermissionById);
+
+        // 3) Query folders
+        $foldersQuery = Folder::with(['department', 'owner'])
+            ->whereIn('id', $allSharedFolderIds);
+
+        // Filter by parent_id for navigation in SharedFilesPage
         if ($parentId === null) {
-            // top-level: only those whose parent_id is null
-            $foldersQuery->whereNull('parent_id');
+            // Root level only
+            $foldersQuery->whereNull('parent_id')
+                ->whereIn('id', $rootSharedFolderIds);
         } else {
             $foldersQuery->where('parent_id', (int) $parentId);
         }
 
-        $folders = $foldersQuery->get();
+        $folders = $foldersQuery->orderBy('name')->get();
 
-        // Need owner / permission info for folders that were directly shared
-        $sharesByFolder = $directShares->keyBy('folder_id');
-
-        $result = $folders->map(function (Folder $folder) use ($sharesByFolder) {
-            $share = $sharesByFolder->get($folder->id);
-
+        // Format EXACTLY for SharedFilesPage.tsx
+        $mapped = $folders->map(function ($folder) use ($folderPermissionById) {
             return [
-                'id'              => $folder->id,
-                'name'            => $folder->name,
-                'parent_id'       => $folder->parent_id,
-                'department_id'   => $folder->department_id,
-                'department_name' => optional($folder->department)->name,
-                'owner_id'        => optional($share)->owner_id,
-                'owner_name'      => optional(optional($share)->owner)->name,
-                'permission'      => optional($share)->permission ?? 'viewer',
+                'id' => $folder->id,
+                'name' => $folder->name,
+                'parentid' => $folder->parent_id,
+                'departmentid' => $folder->department_id,
+                'departmentname' => $folder->department?->name ?? null,
+                'ownerid' => $folder->owner_id,
+                'ownername' => $folder->owner?->name ?? 'Unknown',
+                'permission' => $folderPermissionById[$folder->id] ?? 'viewer',
             ];
-        })->values();
+        });
 
-        return response()->json($result);
+        return response()->json($mapped);
     }
 
+    public function searchSharedDocuments(Request $request)
+    {
+        $request->validate(['q' => 'required|string']);
+        $user = $request->user();
+
+        // Reuse sharedDocuments logic but add search filter
+        $folderId = $request->query('folder_id');
+        $search = $request->query('q');
+
+        $directDocIds = Share::where('target_user_id', $user->id)
+            ->whereNotNull('document_id')
+            ->pluck('document_id')
+            ->toArray();
+
+        $rootSharedFolderIds = Share::where('target_user_id', $user->id)
+            ->whereNotNull('folder_id')
+            ->pluck('folder_id')
+            ->toArray();
+
+        $allSharedFolderIds = $rootSharedFolderIds;
+        if (!empty($rootSharedFolderIds)) {
+            $queue = $rootSharedFolderIds;
+            while (!empty($queue)) {
+                $childIds = Folder::whereIn('parent_id', $queue)
+                    ->pluck('id')
+                    ->toArray();
+                $childIds = array_values(array_diff($childIds, $allSharedFolderIds));
+                if (empty($childIds)) break;
+                $allSharedFolderIds = array_merge($allSharedFolderIds, $childIds);
+                $queue = $childIds;
+            }
+        }
+
+        $docsQuery = Document::with(['folder.department', 'uploadedBy'])
+            ->where(function ($q) use ($directDocIds, $allSharedFolderIds) {
+                if (!empty($directDocIds)) $q->whereIn('id', $directDocIds);
+                if (!empty($allSharedFolderIds)) $q->orWhereIn('folder_id', $allSharedFolderIds);
+            })
+            ->where(function ($q) use ($search) {
+                $like = "%{$search}%";
+                $q->where('title', 'like', $like)
+                    ->orWhere('original_filename', 'like', $like)
+                    ->orWhereHas('uploadedBy', fn($sub) => $sub->where('name', 'like', $like))
+                    ->orWhereHas('folder.department', fn($sub) => $sub->where('name', 'like', $like));
+            });
+
+        if ($folderId !== null) {
+            $docsQuery->where('folder_id', (int) $folderId);
+        }
+
+        $documents = $docsQuery->limit(50)->get();
+
+        // No Document::shares() relation; default permission to viewer
+        $mapped = $documents->map(function ($doc) {
+            return [
+                'id' => $doc->id,
+                'title' => $doc->title,
+                'originalfilename' => $doc->original_filename,
+                'mimetype' => $doc->mime_type,
+                'sizebytes' => $doc->file_size ?? $doc->size_bytes ?? 0,
+                'uploadedat' => $doc->created_at->toISOString(),
+                'lastopenedat' => $doc->last_opened_at?->toISOString() ?? null,
+                'folderid' => $doc->folder_id,
+                'foldername' => $doc->folder?->name ?? null,
+                'departmentid' => $doc->folder?->department_id ?? $doc->department_id,
+                'departmentname' => $doc->folder?->department?->name ?? null,
+                'ownerid' => $doc->uploaded_by ?? $doc->owner_id,
+                'ownername' => $doc->uploadedBy?->name ?? $doc->owner?->name ?? 'Unknown',
+                'sharepermission' => 'viewer',
+            ];
+        });
+
+        return response()->json($mapped);
+    }
+
+    public function searchSharedFolders(Request $request)
+    {
+        $request->validate(['q' => 'required|string']);
+        $user = $request->user();
+        $parentId = $request->query('parent_id');
+        $search = $request->query('q');
+
+        // Same logic as sharedFolders but with search
+        $directShares = Share::where('target_user_id', $user->id)
+            ->whereNotNull('folder_id')
+            ->get();
+
+        if ($directShares->isEmpty()) {
+            return response()->json([]);
+        }
+
+        $rootSharedFolderIds = $directShares->pluck('folder_id')->all();
+        $folderPermissionById = [];
+        foreach ($directShares as $share) {
+            $folderPermissionById[$share->folder_id] = $share->permission;
+        }
+
+        $queue = $rootSharedFolderIds;
+        while (!empty($queue)) {
+            $childIds = Folder::whereIn('parent_id', $queue)->pluck('id')->toArray();
+            $childIds = array_values(array_diff($childIds, array_keys($folderPermissionById)));
+            if (empty($childIds)) break;
+            foreach ($childIds as $childId) {
+                $parentIdForChild = Folder::where('id', $childId)->value('parent_id');
+                $parentPerm = $folderPermissionById[$parentIdForChild] ?? 'viewer';
+                $folderPermissionById[$childId] = $parentPerm;
+            }
+            $queue = $childIds;
+        }
+
+        $allSharedFolderIds = array_keys($folderPermissionById);
+
+        $foldersQuery = Folder::with(['department', 'owner'])
+            ->whereIn('id', $allSharedFolderIds)
+            ->where(function ($q) use ($search) {
+                $like = "%{$search}%";
+                $q->where('name', 'like', $like)
+                    ->orWhereHas('department', fn($sub) => $sub->where('name', 'like', $like))
+                    ->orWhereHas('owner', fn($sub) => $sub->where('name', 'like', $like));
+            });
+
+        if ($parentId === null) {
+            $foldersQuery->whereNull('parent_id')->whereIn('id', $rootSharedFolderIds);
+        } else {
+            $foldersQuery->where('parent_id', (int) $parentId);
+        }
+
+        $folders = $foldersQuery->limit(50)->get();
+
+        $mapped = $folders->map(function ($folder) use ($folderPermissionById) {
+            return [
+                'id' => $folder->id,
+                'name' => $folder->name,
+                'parentid' => $folder->parent_id,
+                'departmentid' => $folder->department_id,
+                'departmentname' => $folder->department?->name ?? null,
+                'ownerid' => $folder->owner_id,
+                'ownername' => $folder->owner?->name ?? 'Unknown',
+                'permission' => $folderPermissionById[$folder->id] ?? 'viewer',
+            ];
+        });
+
+        return response()->json($mapped);
+    }
 
     /**
      * DELETE /shares/{share}

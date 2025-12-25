@@ -9,16 +9,21 @@ type User = {
   id: number;
   name: string;
   email: string;
-  role: string;
-  status: "active" | "disabled";
+  // e.g. "Super Admin" / "Admin" / "Staff"
+  role: string | null;
+  // "active" | "inactive" coming from API (effective_status)
+  status: "active" | "inactive";
+  // optional, if you include it from backend
+  department_name?: string | null;
 };
 
 type UserFormState = {
   id?: number;
   name: string;
   email: string;
-  role: string;
-  status: "active" | "disabled";
+  role: "Super Admin" | "Admin" | "Staff";
+  // UI-level flag; backend still stores raw status column you decide
+  status: "active" | "inactive";
   password: string;
 };
 
@@ -28,6 +33,12 @@ const EMPTY_FORM: UserFormState = {
   role: "Staff",
   status: "active",
   password: "",
+};
+
+const ROLE_NAME_TO_ID: Record<UserFormState["role"], number> = {
+  "Super Admin": 1,
+  Admin: 2,
+  Staff: 3,
 };
 
 export default function UserManagerPage() {
@@ -40,6 +51,14 @@ export default function UserManagerPage() {
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+
+  // new: status filter + sort mode
+  const [statusFilter, setStatusFilter] = useState<
+    "active" | "inactive" | "all"
+  >("active");
+  const [sortMode, setSortMode] = useState<
+    "dept-role-name" | "role-name" | "name"
+  >("dept-role-name");
 
   // load users from API
   const loadUsers = async () => {
@@ -65,11 +84,17 @@ export default function UserManagerPage() {
 
   const openEditWithUser = (user: User) => {
     setUserModalMode("edit");
+
+    const roleName =
+      (user.role as UserFormState["role"]) ||
+      ("Staff" as UserFormState["role"]);
+
     setForm({
       id: user.id,
       name: user.name,
       email: user.email,
-      role: user.role,
+      role: roleName,
+      // map effective status back to UI status toggle
       status: user.status,
       password: "",
     });
@@ -89,20 +114,25 @@ export default function UserManagerPage() {
     setErrorMsg(null);
 
     try {
+      const role_id = ROLE_NAME_TO_ID[form.role];
+
+      // backend can decide how to map UI "inactive" to its raw status column
+      const rawStatus = form.status === "inactive" ? "disabled" : "active";
+
       if (userModalMode === "create") {
         await api.post("/users", {
           name: form.name,
           email: form.email,
-          role: form.role,
-          status: form.status,
+          role_id,
+          status: rawStatus,
           password: form.password,
         });
       } else {
         await api.put(`/users/${form.id}`, {
           name: form.name,
           email: form.email,
-          role: form.role,
-          status: form.status,
+          role_id,
+          status: rawStatus,
           ...(form.password ? { password: form.password } : {}),
         });
       }
@@ -111,20 +141,52 @@ export default function UserManagerPage() {
       setUserModalOpen(false);
       setForm(EMPTY_FORM);
     } catch (err) {
+      console.error(err);
       setErrorMsg("Could not save user. Please check the form and try again.");
     } finally {
       setSubmitting(false);
     }
   };
 
-  const filtered = users.filter((u) => {
-    const q = search.toLowerCase();
-    return (
-      u.name.toLowerCase().includes(q) ||
-      u.email.toLowerCase().includes(q) ||
-      u.role.toLowerCase().includes(q)
-    );
-  });
+  const filtered = users
+    .filter((u) => {
+      const q = search.toLowerCase();
+      const matchesSearch =
+        u.name.toLowerCase().includes(q) ||
+        u.email.toLowerCase().includes(q) ||
+        (u.role ?? "").toLowerCase().includes(q);
+
+      const matchesStatus =
+        statusFilter === "all" ? true : u.status === statusFilter;
+
+      return matchesSearch && matchesStatus;
+    })
+    .sort((a, b) => {
+      if (sortMode === "name") {
+        return a.name.localeCompare(b.name);
+      }
+
+      if (sortMode === "dept-role-name") {
+        const deptA = (a.department_name ?? "").toLowerCase();
+        const deptB = (b.department_name ?? "").toLowerCase();
+        if (deptA !== deptB) return deptA.localeCompare(deptB);
+
+        const roleA = (a.role ?? "").toLowerCase();
+        const roleB = (b.role ?? "").toLowerCase();
+        if (roleA !== roleB) return roleA.localeCompare(roleB);
+
+        return a.name.localeCompare(b.name);
+      }
+
+      if (sortMode === "role-name") {
+        const roleA = (a.role ?? "").toLowerCase();
+        const roleB = (b.role ?? "").toLowerCase();
+        if (roleA !== roleB) return roleA.localeCompare(roleB);
+        return a.name.localeCompare(b.name);
+      }
+
+      return 0;
+    });
 
   return (
     <>
@@ -157,11 +219,29 @@ export default function UserManagerPage() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
-            <select className="rounded-md border border-slate-700 bg-slate-900/60 px-2 py-2 text-sm text-white focus:outline-none">
-              <option>All roles</option>
-              <option>QA Admin</option>
-              <option>Librarian</option>
-              <option>Staff</option>
+            <select
+              className="rounded-md border border-slate-700 bg-slate-900/60 px-2 py-2 text-sm text-white focus:outline-none"
+              value={statusFilter}
+              onChange={(e) =>
+                setStatusFilter(e.target.value as "active" | "inactive" | "all")
+              }
+            >
+              <option value="active">Active only</option>
+              <option value="inactive">Inactive only</option>
+              <option value="all">All users</option>
+            </select>
+            <select
+              className="rounded-md border border-slate-700 bg-slate-900/60 px-2 py-2 text-sm text-white focus:outline-none"
+              value={sortMode}
+              onChange={(e) =>
+                setSortMode(
+                  e.target.value as "dept-role-name" | "role-name" | "name"
+                )
+              }
+            >
+              <option value="dept-role-name">Dept → Role → Name</option>
+              <option value="role-name">Role → Name</option>
+              <option value="name">Name (A–Z)</option>
             </select>
           </div>
         </div>
@@ -185,6 +265,7 @@ export default function UserManagerPage() {
                 <tr>
                   <th className="py-2 pr-4">Name</th>
                   <th className="py-2 pr-4">Email</th>
+                  <th className="py-2 pr-4">Department</th>
                   <th className="py-2 pr-4">Role</th>
                   <th className="py-2 pr-4">Status</th>
                   <th className="py-2 pr-4">Actions</th>
@@ -194,7 +275,7 @@ export default function UserManagerPage() {
                 {loading && (
                   <tr>
                     <td
-                      colSpan={5}
+                      colSpan={6}
                       className="py-4 text-center text-sm text-slate-500"
                     >
                       Loading users…
@@ -207,9 +288,12 @@ export default function UserManagerPage() {
                     <tr key={user.id} className="hover:bg-slate-800/60">
                       <td className="py-2 pr-4 text-white">{user.name}</td>
                       <td className="py-2 pr-4 text-slate-400">{user.email}</td>
+                      <td className="py-2 pr-4 text-slate-400">
+                        {user.department_name ?? "—"}
+                      </td>
                       <td className="py-2 pr-4">
                         <span className="rounded-full bg-slate-500/20 px-2 py-0.5 text-xs text-slate-200">
-                          {user.role}
+                          {user.role ?? "—"}
                         </span>
                       </td>
                       <td
@@ -220,7 +304,7 @@ export default function UserManagerPage() {
                             : "text-slate-400")
                         }
                       >
-                        {user.status === "active" ? "Active" : "Disabled"}
+                        {user.status === "active" ? "Active" : "Inactive"}
                       </td>
                       <td className="py-2 pr-4 space-x-2">
                         <button
@@ -236,12 +320,12 @@ export default function UserManagerPage() {
                 {!loading && filtered.length === 0 && (
                   <tr>
                     <td
-                      colSpan={5}
+                      colSpan={6}
                       className="py-4 text-center text-sm text-slate-500"
                     >
                       {users.length === 0
                         ? "No users yet."
-                        : "No users match your search."}
+                        : "No users match your filters."}
                     </td>
                   </tr>
                 )}
@@ -294,8 +378,8 @@ export default function UserManagerPage() {
                 value={form.role}
                 onChange={handleChange("role")}
               >
-                <option>QA Admin</option>
-                <option>Librarian</option>
+                <option>Super Admin</option>
+                <option>Admin</option>
                 <option>Staff</option>
               </select>
             </div>
@@ -309,7 +393,7 @@ export default function UserManagerPage() {
                 onChange={handleChange("status")}
               >
                 <option value="active">Active</option>
-                <option value="disabled">Disabled</option>
+                <option value="inactive">Inactive</option>
               </select>
             </div>
           </div>

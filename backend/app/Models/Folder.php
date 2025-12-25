@@ -13,10 +13,12 @@ class Folder extends Model
 
     protected $fillable = [
         'name',
+        'description',
         'parent_id',
         'department_id',
         'owner_id',
     ];
+
 
     public function parent(): BelongsTo
     {

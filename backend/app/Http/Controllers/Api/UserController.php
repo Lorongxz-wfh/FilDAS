@@ -14,23 +14,26 @@ class UserController extends Controller
      */
     public function index()
     {
-        // Load users with their role relationship
-        $users = User::with('role')->orderBy('name')->get();
+        $users = User::with('role')
+            ->whereNull('deleted_at') // soft deleted excluded
+            ->orderBy('name')
+            ->get();
 
-        // Transform the data to include role name
         return $users->map(function ($user) {
             return [
-                'id' => $user->id,
-                'name' => $user->name,
-                'email' => $user->email,
-                'role' => $user->role ? $user->role->name : null,
-                'role_id' => $user->role_id,
-                'status' => $user->status ?? 'active',
+                'id'         => $user->id,
+                'name'       => $user->name,
+                'email'      => $user->email,
+                'role'       => $user->role ? $user->role->name : null,
+                'role_id'    => $user->role_id,
+                // active vs inactive derived from status + soft delete
+                'status'     => $user->effective_status,
                 'created_at' => $user->created_at,
                 'updated_at' => $user->updated_at,
             ];
         });
     }
+
 
     /**
      * Store a newly created resource in storage.
@@ -62,7 +65,7 @@ class UserController extends Controller
             'email' => $user->email,
             'role' => $user->role ? $user->role->name : null,
             'role_id' => $user->role_id,
-            'status' => $user->status,
+            'status' => $user->effective_status,
             'created_at' => $user->created_at,
             'updated_at' => $user->updated_at,
         ], 201);
@@ -81,7 +84,7 @@ class UserController extends Controller
             'email' => $user->email,
             'role' => $user->role ? $user->role->name : null,
             'role_id' => $user->role_id,
-            'status' => $user->status ?? 'active',
+            'status' => $user->effective_status,
             'created_at' => $user->created_at,
             'updated_at' => $user->updated_at,
         ]);
@@ -117,7 +120,7 @@ class UserController extends Controller
             'email' => $user->email,
             'role' => $user->role ? $user->role->name : null,
             'role_id' => $user->role_id,
-            'status' => $user->status,
+            'status' => $user->effective_status,
             'created_at' => $user->created_at,
             'updated_at' => $user->updated_at,
         ]);

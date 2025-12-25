@@ -1,3 +1,4 @@
+// src/layouts/AppLayout.tsx
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import Sidebar from "../components/Sidebar";
@@ -30,7 +31,10 @@ function AppLayout() {
   );
 
   const { user, loading } = useCurrentUser();
-  const isAdmin = !!user && user.role?.name === "Admin";
+
+  const roleName = user?.role?.name ?? "";
+  const isSuperAdmin = roleName === "Super Admin";
+  const isAdmin = roleName === "Admin";
 
   useEffect(() => {
     setActivePage(pathToPageKey(location.pathname));
@@ -59,7 +63,6 @@ function AppLayout() {
     );
   }
 
-  // If not logged in, redirect to login (simple guard)
   if (!user) {
     window.location.href = "/login";
     return null;
@@ -72,10 +75,19 @@ function AppLayout() {
         <Sidebar
           activePage={activePage}
           onNavigate={handleNavigate}
-          isAdmin={isAdmin}
+          // Super Admin & Admin can see /users, etc.
+          isAdmin={isSuperAdmin || isAdmin}
         />
         <main className="flex-1 overflow-auto p-6">
-          <Outlet context={{ user, isAdmin }} />
+          <Outlet
+            context={{
+              user,
+              // For pages that only care about “can see admin things”
+              isAdmin: isSuperAdmin || isAdmin,
+              // If a page wants to know if this is truly global Super Admin:
+              isSuperAdmin,
+            }}
+          />
         </main>
       </div>
     </div>

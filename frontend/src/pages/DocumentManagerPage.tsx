@@ -12,7 +12,10 @@ type LayoutContext = {
     department_id: number | null;
     role?: { id: number; name: string } | null;
   };
+  // “admin-ish” (Super Admin or Admin)
   isAdmin: boolean;
+  // truly global role
+  isSuperAdmin: boolean;
 };
 
 import type {
@@ -30,6 +33,7 @@ import { DetailsPanel } from "../components/documents/DetailsPanel";
 import { DocumentUploadModal } from "../components/documents/DocumentUploadModal";
 import { NewFolderModal } from "../components/documents/NewFolderModal";
 import { RenameModal } from "../components/documents/RenameModal";
+import { MoveCopyModal } from "../components/documents/MoveCopyModal";
 
 const Loader = () => (
   <div className="flex h-full items-center justify-center py-10">
@@ -110,7 +114,7 @@ function computeVisibleItems(params: {
   documents: DocumentRow[];
   sortMode: SortMode;
   searchQuery: string;
-  isAdmin: boolean;
+  isSuperAdmin: boolean;
 }): Item[] {
   const {
     currentDepartment,
@@ -120,11 +124,12 @@ function computeVisibleItems(params: {
     documents,
     sortMode,
     searchQuery,
-    isAdmin,
+    isSuperAdmin,
   } = params;
 
+  // Super Admin only: Departments list
   if (!currentDepartment) {
-    if (!isAdmin) {
+    if (!isSuperAdmin) {
       return [];
     }
 
@@ -156,6 +161,18 @@ function computeVisibleItems(params: {
     ...directFiles.map<Item>((d) => ({ kind: "file", data: d })),
   ];
 
+  items = items.filter((item, index, self) => {
+    const id = (item.data as any).id;
+    const key = `${item.kind}-${id}`;
+    return (
+      index ===
+      self.findIndex((other) => {
+        const otherId = (other.data as any).id;
+        return `${other.kind}-${otherId}` === key;
+      })
+    );
+  });
+
   const q = searchQuery.trim().toLowerCase();
   if (!q) return applySort(items, sortMode);
 
@@ -181,22 +198,36 @@ function computeVisibleItems(params: {
     return name.includes(q);
   });
 
+  globalItems = globalItems.filter((item, index, self) => {
+    const id = (item.data as any).id;
+    const key = `${item.kind}-${id}`;
+    return (
+      index ===
+      self.findIndex((other) => {
+        const otherId = (other.data as any).id;
+        return `${other.kind}-${otherId}` === key;
+      })
+    );
+  });
+
   return applySort(globalItems, sortMode);
 }
 
 export default function DocumentManagerPage() {
-  const { user, isAdmin } = useOutletContext<LayoutContext>();
+  const { user, isAdmin, isSuperAdmin } = useOutletContext<LayoutContext>();
   const [departments, setDepartments] = useState<Department[]>([]);
   const [folders, setFolders] = useState<FolderRow[]>([]);
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
 
-  const [currentDepartment, setCurrentDepartment] =
-    useState<Department | null>(null);
+  const [currentDepartment, setCurrentDepartment] = useState<Department | null>(
+    null
+  );
   const [currentFolder, setCurrentFolder] = useState<FolderRow | null>(null);
 
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [sortMode, setSortMode] = useState<SortMode>("alpha");
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -207,21 +238,38 @@ export default function DocumentManagerPage() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
 
-  const [uploading, setUploading] = useState(false);
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [uploadTitle, setUploadTitle] = useState("");
-  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadMode, setUploadMode] = useState<"files" | "folder">("files");
 
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [folderError, setFolderError] = useState<string | null>(null);
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameName, setRenameName] = useState("");
   const [renaming, setRenaming] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
+
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  const [detailsWidth, setDetailsWidth] = useState(320); // px
+
+  // move/copy state
+  const [moveCopyTargetFolderId, setMoveCopyTargetFolderId] = useState<
+    number | null
+  >(null);
+  const [pendingAction, setPendingAction] = useState<"move" | "copy" | null>(
+    null
+  );
+  const [moveCopyOpen, setMoveCopyOpen] = useState(false);
+
+  // ---------- debounced search ----------
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim());
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [searchQuery]);
 
   // ---------- data loading helpers ----------
 
@@ -233,7 +281,7 @@ export default function DocumentManagerPage() {
     setError(null);
     setCurrentDepartment(dept);
     setCurrentFolder(null);
-    setSelectedItem({ kind: "department", data: dept });
+    setSelectedItem(null); // do NOT treat the dept as selected for actions
 
     try {
       const [folderRes, docRes] = await Promise.all([
@@ -275,7 +323,7 @@ export default function DocumentManagerPage() {
     setLoading(true);
     setError(null);
     setCurrentFolder(folder);
-    setSelectedItem({ kind: "folder", data: folder });
+    setSelectedItem(null); // do NOT treat the folder as selected for actions
 
     try {
       const [folderRes, docRes] = await Promise.all([
@@ -310,8 +358,27 @@ export default function DocumentManagerPage() {
     }
   };
 
-  // ---------- INITIAL LOAD (uses sharedTarget + stored state) ----------
+  const handleDetailsResizeStart = () => {
+    const startX =
+      window.event instanceof MouseEvent ? window.event.clientX : 0;
+    const startWidth = detailsWidth;
 
+    const onMove = (e: MouseEvent) => {
+      const delta = startX - e.clientX;
+      const next = Math.min(Math.max(startWidth + delta, 260), 520);
+      setDetailsWidth(next);
+    };
+
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  // ---------- INITIAL LOAD ----------
   useEffect(() => {
     const loadInitial = async () => {
       setLoading(true);
@@ -321,7 +388,6 @@ export default function DocumentManagerPage() {
         const deptItems: Department[] = deptRes.data.data ?? deptRes.data;
         setDepartments(deptItems);
 
-        // Check if coming from SharedFilesPage
         const storedSharedTarget = localStorage.getItem("fildas.sharedTarget");
         if (storedSharedTarget) {
           try {
@@ -330,7 +396,6 @@ export default function DocumentManagerPage() {
               folder_id: number;
               department_id: number | null;
             };
-
             if (target.type === "folder" && target.department_id) {
               const dept =
                 deptItems.find((d) => d.id === target.department_id) || null;
@@ -362,11 +427,10 @@ export default function DocumentManagerPage() {
         }
 
         const storedDeptId = localStorage.getItem("fildas.currentDepartmentId");
-        const storedFolderId =
-          localStorage.getItem("fildas.currentFolderId");
+        const storedFolderId = localStorage.getItem("fildas.currentFolderId");
 
-        // Staff: force to their department
-        if (!isAdmin) {
+        // Staff & Admin: force to their own department
+        if (!isSuperAdmin) {
           const userDeptId = user.department_id;
           if (!userDeptId) {
             setCurrentDepartment(null);
@@ -387,7 +451,7 @@ export default function DocumentManagerPage() {
           return;
         }
 
-        // Admin: restore previous context
+        // Super Admin: restore previous context
         if (!storedDeptId) {
           setCurrentDepartment(null);
           setCurrentFolder(null);
@@ -438,21 +502,90 @@ export default function DocumentManagerPage() {
     };
 
     loadInitial();
-  }, [isAdmin, user.department_id]);
+  }, [isSuperAdmin, user.department_id]);
 
   // ---------- navigation / actions ----------
 
   const handleGoBack = () => {
     if (currentFolder) {
-      // existing folder back logic (not shown in original)
-    } else if (currentDepartment) {
-      if (!isAdmin) {
-        return;
+      const parent =
+        currentFolder.parent_id != null
+          ? folders.find((f) => f.id === currentFolder.parent_id) || null
+          : null;
+      if (parent) {
+        setCurrentFolder(parent);
+        setSelectedItem(null);
+        setSearchQuery(""); // clear search on navigation
+        setDebouncedSearch(""); // clear debounced search
+        localStorage.setItem("fildas.currentFolderId", String(parent.id));
+        loadFolderContents(parent);
+      } else {
+        setCurrentFolder(null);
+        setSelectedItem(null);
+        setSearchQuery(""); // clear search on navigation
+        setDebouncedSearch(""); // clear debounced search
+        localStorage.removeItem("fildas.currentFolderId");
+        if (currentDepartment) {
+          loadDepartmentContents(currentDepartment);
+        }
       }
+    } else if (currentDepartment) {
+      // From department root back to Departments list: Super Admin only
+      if (!isSuperAdmin) return;
       setCurrentDepartment(null);
+      setCurrentFolder(null);
       setSelectedItem(null);
+      setSearchQuery(""); // clear search on navigation
+      setDebouncedSearch(""); // clear debounced search
       localStorage.removeItem("fildas.currentDepartmentId");
       localStorage.removeItem("fildas.currentFolderId");
+    }
+  };
+
+  const handleDownload = async (item: Item) => {
+    if (item.kind !== "file") return;
+    const doc = item.data as DocumentRow;
+    try {
+      const res = await api.get(`/documents/${doc.id}/download`, {
+        responseType: "blob",
+      });
+      const blob = new Blob([res.data], {
+        type: doc.mime_type || "application/octet-stream",
+      });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = doc.original_filename || doc.title || "download";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to download file.");
+    }
+  };
+
+  const handleDownloadFolder = async (item: Item) => {
+    if (item.kind !== "folder") return;
+    const folder = item.data as FolderRow;
+
+    try {
+      const res = await api.get(`/folders/${folder.id}/download`, {
+        responseType: "blob",
+      });
+      const blob = new Blob([res.data], { type: "application/zip" });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${folder.name}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to download folder.");
     }
   };
 
@@ -470,9 +603,7 @@ export default function DocumentManagerPage() {
         const folder = selectedItem.data as FolderRow;
         await api.delete(`/folders/${folder.id}`);
         setFolders((prev) => prev.filter((f) => f.id !== folder.id));
-        setDocuments((prev) =>
-          prev.filter((d) => d.folder_id !== folder.id)
-        );
+        setDocuments((prev) => prev.filter((d) => d.folder_id !== folder.id));
         if (currentFolder && currentFolder.id === folder.id) {
           setCurrentFolder(null);
         }
@@ -480,12 +611,8 @@ export default function DocumentManagerPage() {
         const dept = selectedItem.data as Department;
         await api.delete(`/departments/${dept.id}`);
         setDepartments((prev) => prev.filter((d) => d.id !== dept.id));
-        setFolders((prev) =>
-          prev.filter((f) => f.department_id !== dept.id)
-        );
-        setDocuments((prev) =>
-          prev.filter((d) => d.department_id !== dept.id)
-        );
+        setFolders((prev) => prev.filter((f) => f.department_id !== dept.id));
+        setDocuments((prev) => prev.filter((d) => d.department_id !== dept.id));
         if (currentDepartment && currentDepartment.id === dept.id) {
           setCurrentDepartment(null);
           setCurrentFolder(null);
@@ -500,6 +627,72 @@ export default function DocumentManagerPage() {
     }
   };
 
+  const moveSelected = async (targetFolderId: number | null) => {
+    if (!selectedItem || !currentDepartment) return;
+
+    try {
+      if (selectedItem.kind === "folder") {
+        const folder = selectedItem.data as FolderRow;
+        await api.post(`/folders/${folder.id}/move`, {
+          target_folder_id: targetFolderId,
+        });
+      } else if (selectedItem.kind === "file") {
+        const doc = selectedItem.data as DocumentRow;
+        await api.post(`/documents/${doc.id}/move`, {
+          target_folder_id: targetFolderId,
+        });
+      }
+
+      if (currentFolder) {
+        await loadFolderContents(currentFolder);
+      } else {
+        await loadDepartmentContents(currentDepartment);
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Failed to move item.");
+    }
+  };
+
+  const copySelected = async (targetFolderId: number | null) => {
+    if (!selectedItem || !currentDepartment) return;
+
+    try {
+      if (selectedItem.kind === "folder") {
+        const folder = selectedItem.data as FolderRow;
+        await api.post(`/folders/${folder.id}/copy`, {
+          target_folder_id: targetFolderId,
+        });
+      } else if (selectedItem.kind === "file") {
+        const doc = selectedItem.data as DocumentRow;
+        await api.post(`/documents/${doc.id}/copy`, {
+          target_folder_id: targetFolderId,
+        });
+      }
+
+      if (currentFolder) {
+        await loadFolderContents(currentFolder);
+      } else {
+        await loadDepartmentContents(currentDepartment);
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Failed to copy item.");
+    }
+  };
+
+  const handleMoveCopyConfirm = async (targetFolderId: number | null) => {
+    setMoveCopyTargetFolderId(targetFolderId);
+    if (pendingAction === "move") {
+      await moveSelected(targetFolderId);
+    } else if (pendingAction === "copy") {
+      await copySelected(targetFolderId);
+    }
+    setMoveCopyOpen(false);
+    setPendingAction(null);
+    setMoveCopyTargetFolderId(null);
+  };
+
   const visibleItems: Item[] = computeVisibleItems({
     currentDepartment,
     currentFolder,
@@ -507,8 +700,8 @@ export default function DocumentManagerPage() {
     folders,
     documents,
     sortMode,
-    searchQuery,
-    isAdmin,
+    searchQuery: debouncedSearch,
+    isSuperAdmin,
   });
 
   const folderAncestors: FolderRow[] = (() => {
@@ -539,10 +732,16 @@ export default function DocumentManagerPage() {
     if (item.kind === "department") {
       const dept = { ...(item.data as Department), last_opened_at: now };
       setDepartments((prev) => prev.map((d) => (d.id === dept.id ? dept : d)));
+      setSelectedItem(null);
+      setSearchQuery(""); // clear search
+      setDebouncedSearch(""); // clear debounced search
       loadDepartmentContents(dept);
     } else if (item.kind === "folder") {
       const folder = { ...(item.data as FolderRow), last_opened_at: now };
       setFolders((prev) => prev.map((f) => (f.id === folder.id ? folder : f)));
+      setSelectedItem(null);
+      setSearchQuery(""); // clear search
+      setDebouncedSearch(""); // clear debounced search
       loadFolderContents(folder);
     } else {
       const doc = { ...(item.data as DocumentRow), last_opened_at: now };
@@ -573,6 +772,7 @@ export default function DocumentManagerPage() {
     const loadPreview = async () => {
       if (!detailsOpen || !selectedItem || selectedItem.kind !== "file") {
         setPreviewUrl(null);
+        setPreviewLoading(false);
         return;
       }
 
@@ -584,11 +784,17 @@ export default function DocumentManagerPage() {
         mime !== "application/pdf" &&
         mime !==
           "application/vnd.openxmlformats-officedocument.wordprocessingml.document" &&
-        mime !== "application/msword"
+        mime !== "application/msword" &&
+        mime !==
+          "application/vnd.openxmlformats-officedocument.presentationml.presentation" &&
+        mime !== "application/vnd.ms-powerpoint"
       ) {
         setPreviewUrl(null);
+        setPreviewLoading(false); // <-- FIX 1: ADD THIS
         return;
       }
+
+      setPreviewLoading(true); // <-- FIX 2: ADD THIS
 
       try {
         const url = await getPreviewUrlFromApi(doc.id);
@@ -596,64 +802,13 @@ export default function DocumentManagerPage() {
       } catch (e) {
         console.error("Failed to load preview URL", e);
         setPreviewUrl(null);
+      } finally {
+        setPreviewLoading(false); // <-- FIX 3: ADD THIS
       }
     };
 
     loadPreview();
   }, [detailsOpen, selectedItem]);
-
-  const handleUpload = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!uploadFile || !currentDepartment) {
-      setUploadError("Choose a file and department.");
-      return;
-    }
-
-    setUploading(true);
-    setUploadError(null);
-
-    try {
-      const form = new FormData();
-      form.append("title", uploadTitle || uploadFile.name);
-      form.append("description", "");
-      form.append("department_id", String(currentDepartment.id));
-      if (currentFolder) {
-        form.append("folder_id", String(currentFolder.id));
-      }
-      form.append("file", uploadFile);
-
-      await api.post("/documents", form, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-
-      const docRes = await api.get("/documents", {
-        params: {
-          department_id: currentDepartment.id,
-          folder_id: currentFolder ? currentFolder.id : undefined,
-        },
-      });
-      const docs: DocumentRow[] = docRes.data.data ?? docRes.data;
-
-      setDocuments((prev) => {
-        const others = prev.filter(
-          (d) =>
-            d.department_id !== currentDepartment.id ||
-            (currentFolder && d.folder_id !== currentFolder.id) ||
-            (!currentFolder && d.folder_id != null)
-        );
-        return [...others, ...docs];
-      });
-
-      setUploadOpen(false);
-      setUploadFile(null);
-      setUploadTitle("");
-    } catch (err) {
-      console.error(err);
-      setUploadError("Failed to upload.");
-    } finally {
-      setUploading(false);
-    }
-  };
 
   const handleCreateFolder = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -760,6 +915,11 @@ export default function DocumentManagerPage() {
       ? "Folder selected"
       : "File selected";
 
+  // should actions show?
+  const selectedIsFileOrFolder =
+    selectedItem &&
+    (selectedItem.kind === "file" || selectedItem.kind === "folder");
+
   // ---------- UI ----------
 
   return (
@@ -770,43 +930,91 @@ export default function DocumentManagerPage() {
 
       {/* main toolbar */}
       <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => setUploadOpen(true)}
-          >
-            Upload file
-          </Button>
-          <Button variant="secondary" size="sm">
-            Upload folder
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setNewFolderOpen(true)}
-          >
-            New folder
-          </Button>
+        {/* LEFT: uploads only when inside a department (not departments list) */}
+        <div className="flex h-8.5 items-center">
+          <div className="flex flex-wrap gap-2">
+            {currentDepartment && (
+              <>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => {
+                    setUploadMode("files");
+                    setUploadOpen(true);
+                  }}
+                >
+                  Upload file
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setUploadMode("folder");
+                    setUploadOpen(true);
+                  }}
+                >
+                  Upload folder
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setNewFolderOpen(true)}
+                >
+                  New folder
+                </Button>
+              </>
+            )}
+          </div>
         </div>
-
+        {/* RIGHT: selection label + item actions */}
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <span className="mr-2 text-slate-500">{toolbarLabel}</span>
-          {selectedItem && (
+          {selectedIsFileOrFolder && (
             <>
-              <Button size="xs" onClick={handleDeleteSelected}>
-                Delete
+              <Button
+                size="xs"
+                onClick={() =>
+                  selectedItem!.kind === "file"
+                    ? handleDownload(selectedItem!)
+                    : handleDownloadFolder(selectedItem!)
+                }
+              >
+                Download
               </Button>
-              <Button size="xs">Move</Button>
+
               <Button
                 size="xs"
                 onClick={() => {
                   setRenameError(null);
-                  setRenameName(getItemName(selectedItem));
+                  setRenameName(getItemName(selectedItem!));
                   setRenameOpen(true);
                 }}
               >
                 Rename
+              </Button>
+
+              <Button
+                size="xs"
+                onClick={() => {
+                  setPendingAction("copy");
+                  setMoveCopyOpen(true);
+                }}
+              >
+                Copy
+              </Button>
+
+              <Button
+                size="xs"
+                onClick={() => {
+                  setPendingAction("move");
+                  setMoveCopyOpen(true);
+                }}
+              >
+                Move
+              </Button>
+
+              <Button size="xs" onClick={handleDeleteSelected}>
+                Delete
               </Button>
             </>
           )}
@@ -879,15 +1087,17 @@ export default function DocumentManagerPage() {
         <div className="flex items-center gap-1">
           <button
             className={
-              isAdmin
+              isSuperAdmin
                 ? "text-slate-300 hover:text-sky-400"
                 : "text-slate-500 cursor-default"
             }
             onClick={() => {
-              if (!isAdmin) return;
+              if (!isSuperAdmin) return;
               setCurrentDepartment(null);
               setCurrentFolder(null);
               setSelectedItem(null);
+              setSearchQuery(""); // clear search when going to departments root
+              setDebouncedSearch("");
             }}
           >
             Departments
@@ -900,10 +1110,9 @@ export default function DocumentManagerPage() {
                 className="text-slate-300 hover:text-sky-400"
                 onClick={() => {
                   setCurrentFolder(null);
-                  setSelectedItem({
-                    kind: "department",
-                    data: currentDepartment,
-                  });
+                  setSelectedItem(null); // do not treat dept as selected
+                  setSearchQuery(""); // clear search when going to dept root
+                  setDebouncedSearch("");
                 }}
               >
                 {currentDepartment.name}
@@ -919,7 +1128,9 @@ export default function DocumentManagerPage() {
                   className="text-slate-300 hover:text-sky-400"
                   onClick={() => {
                     setCurrentFolder(folder);
-                    setSelectedItem({ kind: "folder", data: folder });
+                    setSelectedItem(null); // navigation, not selection
+                    setSearchQuery(""); // clear search when jumping via breadcrumb
+                    setDebouncedSearch("");
                   }}
                 >
                   {folder.name}
@@ -936,7 +1147,7 @@ export default function DocumentManagerPage() {
       <div className="flex h-[calc(100vh-260px)] gap-3">
         <section className="flex-1 rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-sm">
           {error && <p className="mb-2 text-xs text-red-400">{error}</p>}
-          {!currentDepartment && isAdmin && (
+          {!currentDepartment && isSuperAdmin && (
             <p className="mb-2 text-xs text-slate-400">
               Double-click a department to open it. Single click selects.
             </p>
@@ -961,6 +1172,22 @@ export default function DocumentManagerPage() {
                 formatSize={formatSize}
                 onClickItem={handleItemClick}
                 onDoubleClickItem={handleItemDoubleClick}
+                onDownload={handleDownload}
+                onDownloadFolder={handleDownloadFolder}
+                onDetails={(item) => {
+                  setSelectedItem(item);
+                  setDetailsOpen(true);
+                }}
+                onCopy={(item) => {
+                  setSelectedItem(item);
+                  setPendingAction("copy");
+                  setMoveCopyOpen(true);
+                }}
+                onMove={(item) => {
+                  setSelectedItem(item);
+                  setPendingAction("move");
+                  setMoveCopyOpen(true);
+                }}
                 onRename={(item) => {
                   setSelectedItem(item);
                   setRenameError(null);
@@ -979,6 +1206,7 @@ export default function DocumentManagerPage() {
                 formatSize={formatSize}
                 onClickItem={handleItemClick}
                 onDoubleClickItem={handleItemDoubleClick}
+                onDownload={handleDownload}
                 onRename={(item) => {
                   setSelectedItem(item);
                   setRenameError(null);
@@ -998,20 +1226,28 @@ export default function DocumentManagerPage() {
           open={detailsOpen}
           selectedItem={selectedItem}
           previewUrl={previewUrl}
+          previewLoading={previewLoading}
           formatSize={formatSize}
           onClose={() => setDetailsOpen(false)}
+          width={detailsWidth}
+          onResizeStart={handleDetailsResizeStart}
         />
       </div>
 
       <DocumentUploadModal
         open={uploadOpen}
-        uploading={uploading}
-        uploadError={uploadError}
-        uploadTitle={uploadTitle}
+        mode={uploadMode}
+        currentDepartmentId={currentDepartment?.id ?? null}
+        currentFolderId={currentFolder?.id ?? null}
         onClose={() => setUploadOpen(false)}
-        onSubmit={handleUpload}
-        onChangeTitle={setUploadTitle}
-        onChangeFile={setUploadFile}
+        onSuccess={async () => {
+          if (currentFolder) {
+            await loadFolderContents(currentFolder);
+          } else if (currentDepartment) {
+            await loadDepartmentContents(currentDepartment);
+          }
+          setUploadOpen(false);
+        }}
       />
 
       <NewFolderModal
@@ -1032,6 +1268,20 @@ export default function DocumentManagerPage() {
         onClose={() => setRenameOpen(false)}
         onSubmit={handleRenameSubmit}
         onChangeName={setRenameName}
+      />
+
+      <MoveCopyModal
+        open={moveCopyOpen && !!pendingAction && !!selectedItem}
+        mode={pendingAction || "move"}
+        currentDepartment={currentDepartment}
+        folders={folders}
+        currentFolder={currentFolder}
+        onClose={() => {
+          setMoveCopyOpen(false);
+          setPendingAction(null);
+          setMoveCopyTargetFolderId(null);
+        }}
+        onConfirm={handleMoveCopyConfirm}
       />
     </>
   );

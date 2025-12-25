@@ -11,7 +11,7 @@ export default function Modal({ open, title, onClose, children }: ModalProps) {
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50">
-      <div className="w-full max-w-lg rounded-lg border border-slate-800 bg-slate-900 shadow-lg">
+      <div className="w-full max-w-xl rounded-lg border border-slate-800 bg-slate-900 shadow-lg">
         <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
           <h2 className="text-sm font-semibold text-slate-200">{title}</h2>
           <button

@@ -10,8 +10,13 @@ type Props = {
   formatSize: (bytes: number) => string;
   onClickItem: (item: Item) => void;
   onDoubleClickItem: (item: Item) => void;
+  onDownload?: (item: Item) => void;
+  onDownloadFolder?: (item: Item) => void;
   onRename: (item: Item) => void;
+  onCopy?: (item: Item) => void;
+  onMove?: (item: Item) => void;
   onDelete: (item: Item) => void;
+  onDetails?: (item: Item) => void;
 };
 
 export function DocumentGrid({
@@ -20,8 +25,13 @@ export function DocumentGrid({
   formatSize,
   onClickItem,
   onDoubleClickItem,
+  onDownload,
+  onDownloadFolder,
   onRename,
+  onCopy,
+  onMove,
   onDelete,
+  onDetails,
 }: Props) {
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-5">
@@ -40,13 +50,10 @@ export function DocumentGrid({
             selectable
             selected={selected}
             className="group cursor-pointer"
-            onClick={(e) => {
-              // ignore clicks inside dropdown
-              if ((e.target as HTMLElement).closest(".dropdown-root")) return;
+            onClick={() => {
               onClickItem(item);
             }}
-            onDoubleClick={(e) => {
-              if ((e.target as HTMLElement).closest(".dropdown-root")) return;
+            onDoubleClick={() => {
               onDoubleClickItem(item);
             }}
           >
@@ -54,35 +61,50 @@ export function DocumentGrid({
               {/* Kebab menu */}
               <DropdownMenu
                 trigger={
-                  <div className="dropdown-root absolute right-1 top-1 hidden group-hover:flex">
-                    <IconButton
-                      size="xs"
-                      variant="ghost"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                      }}
-                    >
-                      ⋮
-                    </IconButton>
-                  </div>
+                  <IconButton
+                    className="dropdown-root absolute right-1 top-1"
+                    size="xs"
+                    variant="ghost"
+                  >
+                    ⋮
+                  </IconButton>
                 }
               >
-                <DropdownMenu.Item
-                  onClick={() => {
-                    onRename(item);
-                  }}
-                >
+                {onDetails && (
+                  <DropdownMenu.Item onClick={() => onDetails(item)}>
+                    Details
+                  </DropdownMenu.Item>
+                )}
+
+                {item.kind === "file" && onDownload && (
+                  <DropdownMenu.Item onClick={() => onDownload(item)}>
+                    Download
+                  </DropdownMenu.Item>
+                )}
+
+                {item.kind === "folder" && onDownloadFolder && (
+                  <DropdownMenu.Item onClick={() => onDownloadFolder(item)}>
+                    Download
+                  </DropdownMenu.Item>
+                )}
+
+                <DropdownMenu.Item onClick={() => onRename(item)}>
                   Rename
                 </DropdownMenu.Item>
-                <DropdownMenu.Item onClick={() => {}}>
-                  Move (placeholder)
-                </DropdownMenu.Item>
-                <DropdownMenu.Item
-                  destructive
-                  onClick={() => {
-                    onDelete(item);
-                  }}
-                >
+
+                {onCopy && (
+                  <DropdownMenu.Item onClick={() => onCopy(item)}>
+                    Copy
+                  </DropdownMenu.Item>
+                )}
+
+                {onMove && (
+                  <DropdownMenu.Item onClick={() => onMove(item)}>
+                    Move
+                  </DropdownMenu.Item>
+                )}
+
+                <DropdownMenu.Item destructive onClick={() => onDelete(item)}>
                   Delete
                 </DropdownMenu.Item>
               </DropdownMenu>
