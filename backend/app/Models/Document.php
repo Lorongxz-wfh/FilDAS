@@ -1,12 +1,11 @@
 <?php
-// app/Models/Document.php
 
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use App\Models\User;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class Document extends Model
 {
@@ -24,7 +23,7 @@ class Document extends Model
         'document_type_id',
         'folder_id',
         'uploaded_by',
-        'owner_id',      // <-- added
+        'owner_id',
         'uploaded_at',
     ];
 
@@ -40,7 +39,6 @@ class Document extends Model
         return $this->belongsTo(Department::class);
     }
 
-    // renamed to match with() call: uploadedBy
     public function uploadedBy()
     {
         return $this->belongsTo(User::class, 'uploaded_by');
@@ -68,5 +66,11 @@ class Document extends Model
         }
 
         return round($bytes, 2) . ' ' . $units[$i];
+    }
+
+    // NEW: polymorphic activities
+    public function activities(): MorphMany
+    {
+        return $this->morphMany(Activity::class, 'subject');
     }
 }

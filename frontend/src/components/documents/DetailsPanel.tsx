@@ -608,24 +608,31 @@ function ActivityPlaceholder({ selectedItem }: { selectedItem: Item }) {
       return;
     }
 
-    const fetchActivities = async () => {
-      setLoading(true);
-      setError(null);
+const fetchActivities = async () => {
+  setLoading(true);
+  setError(null);
 
-      const type = selectedItem.kind === "file" ? "documents" : "folders";
-      const id = (selectedItem.data as any).id;
+  const type = selectedItem.kind === "file" ? "documents" : "folders";
+  const id = (selectedItem.data as any).id;
 
-      try {
-        const res = await api.get(`/${type}/${id}/activity`);
-        const data = res.data.data ?? res.data;
-        setActivities(data);
-      } catch (e) {
-        console.error(e);
-        setError("Failed to load activity");
-      } finally {
-        setLoading(false);
-      }
-    };
+  try {
+    const res = await api.get(`/${type}/${id}/activity`);
+
+    // BEFORE:
+    // const data = res.data.data ?? res.data;
+
+    // AFTER: controller already returns a raw array
+    const data = res.data as any[];
+
+    setActivities(data);
+  } catch (e) {
+    console.error(e);
+    setError("Failed to load activity");
+  } finally {
+    setLoading(false);
+  }
+};
+
 
     fetchActivities();
   }, [selectedItem]);

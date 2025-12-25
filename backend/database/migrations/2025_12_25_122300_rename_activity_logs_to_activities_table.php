@@ -8,11 +8,15 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::rename('activity_logs', 'activities');
+        if (Schema::hasTable('activity_logs') && ! Schema::hasTable('activities')) {
+            Schema::rename('activity_logs', 'activities');
+        }
     }
 
     public function down(): void
     {
-        Schema::rename('activities', 'activity_logs');
+        if (Schema::hasTable('activities') && ! Schema::hasTable('activity_logs')) {
+            Schema::rename('activities', 'activity_logs');
+        }
     }
 };

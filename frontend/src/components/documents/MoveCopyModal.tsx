@@ -25,6 +25,9 @@ export function MoveCopyModal({
   onConfirm,
 }: Props) {
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+  const [selectedDestinationId, setSelectedDestinationId] = useState<
+    number | null
+  >(null);
 
   // build tree of folders in this department
   const roots = useMemo<TreeNode[]>(() => {
@@ -62,19 +65,32 @@ export function MoveCopyModal({
     setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
+  const handleConfirm = () => {
+    onConfirm(selectedDestinationId);
+  };
+
+  const isCurrentFolder = (nodeId: number | null) =>
+    currentFolder && currentFolder.id === nodeId;
+
   const renderNode = (node: TreeNode, depth: number = 0) => {
     const isExpanded = expanded[node.id] ?? true;
     const hasChildren = node.children.length > 0;
-    const isCurrent = currentFolder && currentFolder.id === node.id;
+    const isCurrent = isCurrentFolder(node.id);
+    const isSelected = selectedDestinationId === node.id;
 
     return (
       <div key={node.id}>
         <button
           type="button"
-          className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-xs hover:bg-slate-800 ${
-            isCurrent ? "bg-slate-800/60" : ""
-          }`}
-          onClick={() => onConfirm(node.id)}
+          className={[
+            "flex w-full items-center justify-between px-3 py-1.5 text-left text-xs hover:bg-slate-800",
+            isSelected ? "bg-slate-800" : "",
+            !isSelected && isCurrent ? "bg-slate-800/60" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          onClick={() => setSelectedDestinationId(node.id)}
+          onDoubleClick={handleConfirm}
         >
           <div className="flex items-center gap-1">
             <span
@@ -106,6 +122,9 @@ export function MoveCopyModal({
     );
   };
 
+  const departmentRootSelected = selectedDestinationId === null;
+  const departmentRootCurrent = !currentFolder;
+
   return (
     <Modal open={open} title={title} onClose={onClose}>
       <div className="space-y-3 text-sm">
@@ -117,16 +136,23 @@ export function MoveCopyModal({
           {/* department root */}
           <button
             type="button"
-            className={`flex w-full items-center justify-between px-3 py-1.5 text-left text-xs hover:bg-slate-800 ${
-              !currentFolder ? "bg-slate-800/60" : ""
-            }`}
-            onClick={() => onConfirm(null)}
+            className={[
+              "flex w-full items-center justify-between px-3 py-1.5 text-left text-xs hover:bg-slate-800",
+              departmentRootSelected ? "bg-slate-800" : "",
+              !departmentRootSelected && departmentRootCurrent
+                ? "bg-slate-800/60"
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            onClick={() => setSelectedDestinationId(null)}
+            onDoubleClick={handleConfirm}
           >
             <div className="flex items-center gap-1">
               <span className="inline-flex w-4" />
               <span className="text-slate-100">Department root</span>
             </div>
-            {!currentFolder && (
+            {departmentRootCurrent && (
               <span className="text-[10px] text-slate-500">(current)</span>
             )}
           </button>
@@ -138,6 +164,14 @@ export function MoveCopyModal({
         <div className="flex justify-end gap-2 pt-2">
           <Button size="xs" variant="secondary" onClick={onClose}>
             Cancel
+          </Button>
+          <Button
+            size="xs"
+            variant="primary"
+            onClick={handleConfirm}
+            disabled={selectedDestinationId === undefined}
+          >
+            {mode === "move" ? "Move here" : "Copy here"}
           </Button>
         </div>
       </div>

@@ -9,6 +9,11 @@ import { Card } from "../components/ui/Card";
 import { IconButton } from "../components/ui/IconButton";
 import { DropdownMenu } from "../components/ui/DropdownMenu";
 
+import { DocumentUploadModal } from "../components/documents/DocumentUploadModal";
+import { NewFolderModal } from "../components/documents/NewFolderModal";
+import { RenameModal } from "../components/documents/RenameModal";
+import { MoveCopyModal } from "../components/documents/MoveCopyModal";
+
 type LayoutContext = {
   user: {
     id: number;
@@ -60,10 +65,6 @@ export default function SharedFilesPage() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [searchResultsFolders, setSearchResultsFolders] = useState<
-    SharedFolder[]
-  >([]);
-  const [searchResultsDocs, setSearchResultsDocs] = useState<DocumentRow[]>([]);
 
   // ---------- UI state (loading, errors, view/sort) ----------
 
@@ -82,6 +83,32 @@ export default function SharedFilesPage() {
   const [previewLoading, setPreviewLoading] = useState(false);
 
   const [detailsWidth, setDetailsWidth] = useState(320); // px
+
+  // ---------- modals state ----------
+  const [sharedUploadOpen, setSharedUploadOpen] = useState(false);
+  const [sharedUploadMode, setSharedUploadMode] = useState<"files" | "folder">(
+    "files"
+  );
+  const [sharedNewFolderOpen, setSharedNewFolderOpen] = useState(false);
+  const [sharedCreatingFolder, setSharedCreatingFolder] = useState(false);
+  const [sharedNewFolderName, setSharedNewFolderName] = useState("");
+  const [sharedFolderError, setSharedFolderError] = useState<string | null>(
+    null
+  );
+
+  const [sharedRenameOpen, setSharedRenameOpen] = useState(false);
+  const [sharedRenameName, setSharedRenameName] = useState("");
+  const [sharedRenaming, setSharedRenaming] = useState(false);
+  const [sharedRenameError, setSharedRenameError] = useState<string | null>(
+    null
+  );
+
+  const [sharedMoveCopyOpen, setSharedMoveCopyOpen] = useState(false);
+  const [sharedPendingAction, setSharedPendingAction] = useState<
+    "move" | "copy" | null
+  >(null);
+  const [sharedMoveCopyTargetFolderId, setSharedMoveCopyTargetFolderId] =
+    useState<number | null>(null);
 
   // ---------- data loading helpers ----------
 
@@ -422,13 +449,219 @@ export default function SharedFilesPage() {
       alert("Failed to download file.");
     }
   };
+  const handleDownloadFolder = async (folder: SharedFolder) => {
+    try {
+      const res = await api.get(`/folders/${folder.id}/download`, {
+        responseType: "blob",
+      });
+      const blob = new Blob([res.data], { type: "application/zip" });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${folder.name}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to download folder.");
+    }
+  };
 
-  const isEditor =
-    (currentFolder && currentFolder.permission === "editor") ||
-    (selectedItem &&
-      selectedItem.kind === "file" &&
-      (selectedItem.data as any).share_permission === "editor") ||
-    isAdmin;
+  const getSharedItemName = (item: Item | null) => {
+    if (!item) return "";
+    if (item.kind === "file") {
+      const d = item.data as DocumentRow;
+      return d.title || d.original_filename || "";
+    }
+    return (item.data as SharedFolder).name;
+  };
+
+  const handleSharedCreateFolder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!sharedNewFolderName.trim() || !currentFolder) {
+      setSharedFolderError("Enter a name.");
+      return;
+    }
+    setSharedCreatingFolder(true);
+    setSharedFolderError(null);
+    try {
+      const res = await api.post("/folders", {
+        name: sharedNewFolderName.trim(),
+        department_id: currentFolder.department_id!,
+        parent_id: currentFolder.id,
+      });
+      const created: SharedFolder = {
+        id: res.data.folder?.id ?? res.data.id,
+        name: res.data.folder?.name ?? res.data.name,
+        parent_id: currentFolder.id,
+        department_id: currentFolder.department_id!,
+        department_name: currentFolder.department_name,
+        owner_id: user.id,
+        owner_name: user.name,
+        permission: currentFolder.permission,
+      };
+      setFolderChildren((prev) => [...prev, created]);
+      setFolders((prev) => [...prev, created]);
+      setSharedNewFolderName("");
+      setSharedNewFolderOpen(false);
+    } catch (err: any) {
+      console.error(err);
+      setSharedFolderError(
+        err.response?.data?.message || "Failed to create folder."
+      );
+    } finally {
+      setSharedCreatingFolder(false);
+    }
+  };
+
+  const handleSharedRenameSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedItem) return;
+
+    const newName = sharedRenameName.trim();
+    if (!newName) {
+      setSharedRenameError("Name is required.");
+      return;
+    }
+
+    setSharedRenaming(true);
+    setSharedRenameError(null);
+
+    try {
+      if (selectedItem.kind === "file") {
+        const doc = selectedItem.data as DocumentRow;
+
+        await api.patch(`/documents/${doc.id}`, { title: newName });
+
+        const updated = { ...doc, title: newName };
+        setAllSharedDocs((prev) =>
+          prev.map((d) => (d.id === doc.id ? updated : d))
+        );
+        setDocuments((prev) =>
+          prev.map((d) => (d.id === doc.id ? updated : d))
+        );
+        setFolderDocs((prev) =>
+          prev.map((d) => (d.id === doc.id ? updated : d))
+        );
+        setSelectedItem({ kind: "file", data: updated as any });
+      } else {
+        const folder = selectedItem.data as SharedFolder;
+
+        await api.patch(`/folders/${folder.id}`, { name: newName });
+
+        const updated = { ...folder, name: newName };
+        setFolders((prev) =>
+          prev.map((f) => (f.id === folder.id ? updated : f))
+        );
+        setFolderChildren((prev) =>
+          prev.map((f) => (f.id === folder.id ? updated : f))
+        );
+        setSelectedItem({ kind: "folder", data: updated as any });
+      }
+
+      setSharedRenameOpen(false);
+    } catch (err: any) {
+      console.error(err);
+      setSharedRenameError(
+        err.response?.data?.message || "Failed to rename item."
+      );
+    } finally {
+      setSharedRenaming(false);
+    }
+  };
+
+  const handleSharedDeleteSelected = async () => {
+    if (!selectedItem) return;
+    if (!window.confirm(`Delete this ${selectedItem.kind}?`)) return;
+    try {
+      if (selectedItem.kind === "file") {
+        const doc = selectedItem.data as DocumentRow;
+        await api.delete(`/documents/${doc.id}`);
+        setAllSharedDocs((prev) => prev.filter((d) => d.id !== doc.id));
+        setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+        setFolderDocs((prev) => prev.filter((d) => d.id !== doc.id));
+      } else {
+        const folder = selectedItem.data as SharedFolder;
+        await api.delete(`/folders/${folder.id}`);
+        setFolders((prev) => prev.filter((f) => f.id !== folder.id));
+        setFolderChildren((prev) => prev.filter((f) => f.id !== folder.id));
+      }
+      setSelectedItem(null);
+      setDetailsOpen(false);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to delete item.");
+    }
+  };
+
+  const handleSharedMoveCopyConfirm = async (targetFolderId: number | null) => {
+    if (!selectedItem || !sharedPendingAction) return;
+    try {
+      if (selectedItem.kind === "file") {
+        const doc = selectedItem.data as DocumentRow;
+        await api.post(
+          `/${selectedItem.kind}s/${doc.id}/${sharedPendingAction}`,
+          {
+            target_folder_id: targetFolderId,
+          }
+        );
+      } else {
+        const folder = selectedItem.data as SharedFolder;
+        await api.post(
+          `/${selectedItem.kind}s/${folder.id}/${sharedPendingAction}`,
+          {
+            target_folder_id: targetFolderId,
+          }
+        );
+      }
+      if (currentFolder) {
+        await loadSharedFolderContents(currentFolder);
+      } else {
+        await loadTopLevelShared();
+      }
+    } catch (e) {
+      console.error(e);
+      alert(`Failed to ${sharedPendingAction} item.`);
+    } finally {
+      setSharedMoveCopyOpen(false);
+      setSharedPendingAction(null);
+    }
+  };
+
+  const isOwner = (selectedItem?.data as any)?.owner_id === user.id;
+
+  // permission for the *currently relevant* context
+  const currentPermission = (() => {
+    // If a folder is open, its permission controls uploads and top toolbar
+    if (currentFolder) {
+      return currentFolder.permission as "viewer" | "editor" | null;
+    }
+
+    // If no folder is open, but a shared folder row is selected at root
+    if (selectedItem?.kind === "folder") {
+      return (selectedItem.data as any).permission as
+        | "viewer"
+        | "editor"
+        | null;
+    }
+
+    // If a shared document row is selected
+    if (selectedItem?.kind === "file") {
+      return (selectedItem.data as any).share_permission as
+        | "viewer"
+        | "editor"
+        | null;
+    }
+
+    return null;
+  })();
+
+  // Only treat as editor if explicitly editor, or admin/owner
+  const canEditContext = currentPermission === "editor" || isOwner || isAdmin;
+
+  const isEditor = canEditContext;
 
   const toolbarLabel =
     selectedItem === null
@@ -441,6 +674,26 @@ export default function SharedFilesPage() {
     selectedItem &&
     (selectedItem.kind === "file" || selectedItem.kind === "folder");
 
+  const handleDetailsResizeStart = () => {
+    const startX =
+      window.event instanceof MouseEvent ? window.event.clientX : 0;
+    const startWidth = detailsWidth;
+
+    const onMove = (e: MouseEvent) => {
+      const delta = startX - e.clientX;
+      const next = Math.min(Math.max(startWidth + delta, 260), 520);
+      setDetailsWidth(next);
+    };
+
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   // ---------- UI ----------
 
   return (
@@ -451,16 +704,37 @@ export default function SharedFilesPage() {
         {/* toolbar */}
         <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           {/* left: upload buttons disabled in shared view */}
+          {/* LEFT: uploads + new folder (editors only, inside folder) */}
           <div className="flex h-8.5 items-center">
             <div className="flex flex-wrap gap-2">
-              {currentFolder && (
+              {currentFolder && isEditor && (
                 <>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => {
+                      setSharedUploadMode("files");
+                      setSharedUploadOpen(true);
+                    }}
+                  >
+                    Upload file
+                  </Button>
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={handleBackToSharedList}
+                    onClick={() => {
+                      setSharedUploadMode("folder");
+                      setSharedUploadOpen(true);
+                    }}
                   >
-                    Back to shared root
+                    Upload folder
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setSharedNewFolderOpen(true)}
+                  >
+                    New folder
                   </Button>
                 </>
               )}
@@ -472,18 +746,68 @@ export default function SharedFilesPage() {
             <span className="mr-2 text-slate-500">{toolbarLabel}</span>
             {selectedIsFileOrFolder && (
               <div className="flex flex-wrap items-center gap-2">
-                <Button size="xs" onClick={handleDownloadSelected}>
+                {/* Download */}
+                <Button
+                  size="xs"
+                  onClick={() =>
+                    selectedItem!.kind === "file"
+                      ? handleDownloadSelected()
+                      : handleDownloadFolder(selectedItem!.data as any)
+                  }
+                >
                   Download
                 </Button>
+
                 {isEditor && (
                   <>
-                    <Button size="xs" disabled>
+                    {/* Rename */}
+                    <Button
+                      size="xs"
+                      onClick={() => {
+                        if (!selectedItem) return;
+                        if (selectedItem.kind === "file") {
+                          const doc = selectedItem.data as any;
+                          setSharedRenameName(
+                            doc.title || doc.original_filename || ""
+                          );
+                        } else {
+                          const folder = selectedItem.data as any;
+                          setSharedRenameName(folder.name || "");
+                        }
+                        setSharedRenameError(null);
+                        setSharedRenameOpen(true);
+                      }}
+                    >
                       Rename
                     </Button>
-                    <Button size="xs" disabled>
+
+                    {/* Copy */}
+                    <Button
+                      size="xs"
+                      onClick={() => {
+                        setSharedPendingAction("copy");
+                        setSharedMoveCopyOpen(true);
+                      }}
+                    >
+                      Copy
+                    </Button>
+
+                    {/* Move */}
+                    <Button
+                      size="xs"
+                      onClick={() => {
+                        setSharedPendingAction("move");
+                        setSharedMoveCopyOpen(true);
+                      }}
+                    >
                       Move
                     </Button>
-                    <Button size="xs" disabled>
+
+                    {/* Delete (red) */}
+                    <Button
+                      size="xs"
+                      onClick={handleSharedDeleteSelected}
+                    >
                       Delete
                     </Button>
                   </>
@@ -651,6 +975,11 @@ export default function SharedFilesPage() {
                                   }
                                 >
                                   <DropdownMenu.Item
+                                    onClick={() => handleSelectFolder(folder)}
+                                  >
+                                    Open
+                                  </DropdownMenu.Item>
+                                  <DropdownMenu.Item
                                     onClick={() => {
                                       setSelectedItem({
                                         kind: "folder",
@@ -662,10 +991,63 @@ export default function SharedFilesPage() {
                                     Details
                                   </DropdownMenu.Item>
                                   <DropdownMenu.Item
-                                    onClick={() => handleSelectFolder(folder)}
+                                    onClick={() => handleDownloadFolder(folder)}
                                   >
-                                    Open
+                                    Download
                                   </DropdownMenu.Item>
+                                  <DropdownMenu.Item
+                                    onClick={() => {
+                                      setSelectedItem({
+                                        kind: "folder",
+                                        data: folder as any,
+                                      });
+                                      setSharedPendingAction("copy");
+                                      setSharedMoveCopyOpen(true);
+                                    }}
+                                  >
+                                    Copy
+                                  </DropdownMenu.Item>
+                                  {isEditor && (
+                                    <>
+                                      <DropdownMenu.Item
+                                        onClick={() => {
+                                          setSelectedItem({
+                                            kind: "folder",
+                                            data: folder as any,
+                                          });
+                                          setSharedRenameError(null);
+                                          setSharedRenameName(folder.name);
+                                          setSharedRenameOpen(true);
+                                        }}
+                                      >
+                                        Rename
+                                      </DropdownMenu.Item>
+                                      <DropdownMenu.Item
+                                        onClick={() => {
+                                          setSelectedItem({
+                                            kind: "folder",
+                                            data: folder as any,
+                                          });
+                                          setSharedPendingAction("move");
+                                          setSharedMoveCopyOpen(true);
+                                        }}
+                                      >
+                                        Move
+                                      </DropdownMenu.Item>
+                                      <DropdownMenu.Item
+                                        destructive
+                                        onClick={() => {
+                                          setSelectedItem({
+                                            kind: "folder",
+                                            data: folder as any,
+                                          });
+                                          handleSharedDeleteSelected();
+                                        }}
+                                      >
+                                        Delete
+                                      </DropdownMenu.Item>
+                                    </>
+                                  )}
                                 </DropdownMenu>
                               </div>
                               <div className="space-y-0.5">
@@ -760,11 +1142,6 @@ export default function SharedFilesPage() {
                         ? "📕"
                         : "📁";
 
-                      const isViewerOnly =
-                        !isEditor ||
-                        (doc.share_permission &&
-                          doc.share_permission !== "editor");
-
                       return (
                         <Card
                           key={doc.id}
@@ -808,23 +1185,63 @@ export default function SharedFilesPage() {
                                   Details
                                 </DropdownMenu.Item>
                                 <DropdownMenu.Item
+                                  onClick={() => handleDownloadSelected()}
+                                >
+                                  Download
+                                </DropdownMenu.Item>
+                                <DropdownMenu.Item
                                   onClick={() => {
                                     setSelectedItem({
                                       kind: "file",
                                       data: doc as any,
                                     });
-                                    handleDownloadSelected();
+                                    setSharedPendingAction("copy");
+                                    setSharedMoveCopyOpen(true);
                                   }}
                                 >
-                                  Download
+                                  Copy
                                 </DropdownMenu.Item>
-                                {isViewerOnly ? null : (
+                                {isEditor && (
                                   <>
-                                    <DropdownMenu.Item>
+                                    <DropdownMenu.Item
+                                      onClick={() => {
+                                        setSelectedItem({
+                                          kind: "file",
+                                          data: doc as any,
+                                        });
+                                        setSharedRenameError(null);
+                                        setSharedRenameName(
+                                          doc.title ||
+                                            doc.original_filename ||
+                                            ""
+                                        );
+                                        setSharedRenameOpen(true);
+                                      }}
+                                    >
                                       Rename
                                     </DropdownMenu.Item>
-                                    <DropdownMenu.Item>Move</DropdownMenu.Item>
-                                    <DropdownMenu.Item>
+                                    <DropdownMenu.Item
+                                      onClick={() => {
+                                        setSelectedItem({
+                                          kind: "file",
+                                          data: doc as any,
+                                        });
+                                        setSharedPendingAction("move");
+                                        setSharedMoveCopyOpen(true);
+                                      }}
+                                    >
+                                      Move
+                                    </DropdownMenu.Item>
+                                    <DropdownMenu.Item
+                                      destructive
+                                      onClick={() => {
+                                        setSelectedItem({
+                                          kind: "file",
+                                          data: doc as any,
+                                        });
+                                        handleSharedDeleteSelected();
+                                      }}
+                                    >
                                       Delete
                                     </DropdownMenu.Item>
                                   </>
@@ -916,30 +1333,57 @@ export default function SharedFilesPage() {
               previewLoading={previewLoading}
               formatSize={formatSize}
               onClose={() => setDetailsOpen(false)}
+              canEditAccess={canEditContext}
               width={detailsWidth}
-              onResizeStart={() => {
-                const startX =
-                  window.event instanceof MouseEvent ? window.event.clientX : 0;
-                const startWidth = detailsWidth;
-
-                const onMove = (e: MouseEvent) => {
-                  const delta = startX - e.clientX;
-                  const next = Math.min(Math.max(startWidth + delta, 260), 520);
-                  setDetailsWidth(next);
-                };
-
-                const onUp = () => {
-                  window.removeEventListener("mousemove", onMove);
-                  window.removeEventListener("mouseup", onUp);
-                };
-
-                window.addEventListener("mousemove", onMove);
-                window.addEventListener("mouseup", onUp);
-              }}
+              onResizeStart={handleDetailsResizeStart}
             />
           </section>
         </div>
       </main>
+
+      {/* Shared modals */}
+      <DocumentUploadModal
+        open={sharedUploadOpen}
+        mode={sharedUploadMode}
+        currentDepartmentId={currentFolder?.department_id ?? null}
+        currentFolderId={currentFolder?.id ?? null}
+        onClose={() => setSharedUploadOpen(false)}
+        onSuccess={async () => {
+          if (currentFolder) await loadSharedFolderContents(currentFolder);
+          else await loadTopLevelShared();
+          setSharedUploadOpen(false);
+        }}
+      />
+      <NewFolderModal
+        open={sharedNewFolderOpen}
+        creating={sharedCreatingFolder}
+        folderError={sharedFolderError}
+        newFolderName={sharedNewFolderName}
+        onClose={() => setSharedNewFolderOpen(false)}
+        onSubmit={handleSharedCreateFolder}
+        onChangeName={setSharedNewFolderName}
+      />
+      <RenameModal
+        open={sharedRenameOpen}
+        renaming={sharedRenaming}
+        renameError={sharedRenameError}
+        renameName={sharedRenameName}
+        onClose={() => setSharedRenameOpen(false)}
+        onSubmit={handleSharedRenameSubmit}
+        onChangeName={setSharedRenameName}
+      />
+      <MoveCopyModal
+        open={sharedMoveCopyOpen && !!sharedPendingAction}
+        mode={sharedPendingAction || "move"}
+        currentDepartment={null} // shared folders don't need dept
+        folders={folders}
+        currentFolder={currentFolder}
+        onClose={() => {
+          setSharedMoveCopyOpen(false);
+          setSharedPendingAction(null);
+        }}
+        onConfirm={handleSharedMoveCopyConfirm}
+      />
     </div>
   );
 }

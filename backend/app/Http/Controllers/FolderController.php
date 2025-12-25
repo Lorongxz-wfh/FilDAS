@@ -17,7 +17,7 @@ class FolderController extends Controller
 {
     public function index(Request $request)
     {
-        $user = $request->user();
+        $user  = $request->user();
         $query = Folder::query();
 
         if ($request->filled('department_id')) {
@@ -71,16 +71,23 @@ class FolderController extends Controller
             'owner_id'      => $user->id,
         ]);
 
-        try {
-            ActivityLogger::log($folder, 'created', 'Folder created via form');
-            Log::info('Activity logged successfully for folder: ' . $folder->id);
-        } catch (\Exception $e) {
-            Log::error('Failed to log activity', ['error' => $e->getMessage()]);
+        // Log on the folder itself
+        ActivityLogger::log($folder, 'created', 'Folder created via form');
+
+        // Also log on parent folder, if any
+        if ($folder->parent_id) {
+            if ($parent = Folder::find($folder->parent_id)) {
+                ActivityLogger::log(
+                    $parent,
+                    'updated',
+                    "Created subfolder: {$folder->name}"
+                );
+            }
         }
 
         return response()->json([
             'message' => 'Folder created',
-            'folder'  => $folder,
+            'folder'  => $folder->fresh(['owner', 'department']),
         ], 201);
     }
 
@@ -108,7 +115,19 @@ class FolderController extends Controller
 
     public function destroy(Folder $folder)
     {
-        ActivityLogger::log($folder, 'deleted');
+        // log on the folder being deleted
+        ActivityLogger::log($folder, 'deleted', 'Folder deleted');
+
+        // also log on parent folder if any
+        if ($folder->parent_id) {
+            if ($parent = Folder::find($folder->parent_id)) {
+                ActivityLogger::log(
+                    $parent,
+                    'updated',
+                    "Deleted subfolder: {$folder->name}"
+                );
+            }
+        }
 
         $this->deleteFolderRecursively($folder);
 
@@ -136,7 +155,7 @@ class FolderController extends Controller
     {
         try {
             $allFolderIds = [$folder->id];
-            $queue = [$folder->id];
+            $queue        = [$folder->id];
 
             while (!empty($queue)) {
                 $childIds = Folder::whereIn('parent_id', $queue)->pluck('id')->toArray();
@@ -144,7 +163,7 @@ class FolderController extends Controller
                     break;
                 }
                 $allFolderIds = array_merge($allFolderIds, $childIds);
-                $queue = $childIds;
+                $queue        = $childIds;
             }
 
             $documents = Document::whereIn('folder_id', $allFolderIds)->get();
@@ -159,9 +178,9 @@ class FolderController extends Controller
             }
 
             $zipFileName = preg_replace('/[^A-Za-z0-9_\-]/', '_', $folder->name) . '_' . time() . '.zip';
-            $zipPath = $tempDir . '/' . $zipFileName;
+            $zipPath     = $tempDir . '/' . $zipFileName;
 
-            $zip = new ZipArchive();
+            $zip    = new ZipArchive();
             $result = $zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE);
 
             if ($result !== true) {
@@ -169,7 +188,7 @@ class FolderController extends Controller
                 return response()->json(['error' => 'Failed to create zip file'], 500);
             }
 
-            $disk = Storage::disk('fildas_docs');
+            $disk       = Storage::disk('fildas_docs');
             $addedCount = 0;
 
             foreach ($documents as $doc) {
@@ -180,7 +199,7 @@ class FolderController extends Controller
 
                 $fullPath = $disk->path($doc->file_path);
 
-                $docFolder = Folder::find($doc->folder_id);
+                $docFolder   = Folder::find($doc->folder_id);
                 $folderChain = [];
 
                 while ($docFolder && $docFolder->id !== $folder->id) {
@@ -239,11 +258,11 @@ class FolderController extends Controller
         }
 
         $targetFolder = null;
-        $newDeptId = $folder->department_id;
+        $newDeptId    = $folder->department_id;
 
         if (!empty($data['target_folder_id'])) {
             $targetFolder = Folder::findOrFail($data['target_folder_id']);
-            $newDeptId = $targetFolder->department_id;
+            $newDeptId    = $targetFolder->department_id;
         } elseif (!empty($data['target_department_id'])) {
             $newDeptId = (int) $data['target_department_id'];
         }
@@ -270,7 +289,17 @@ class FolderController extends Controller
             ? "Moved to folder: {$targetFolder->name}"
             : 'Moved to department root';
 
+        // log on the folder itself
         ActivityLogger::log($folder, 'updated', $details);
+
+        // log on the new parent folder, if any
+        if ($targetFolder) {
+            ActivityLogger::log(
+                $targetFolder,
+                'updated',
+                "Folder moved here: {$folder->name}"
+            );
+        }
 
         return response()->json([
             'message' => 'Folder moved',
@@ -322,11 +351,37 @@ class FolderController extends Controller
             $newRoot = $this->cloneFolderTree($folder, $targetFolder, $deptId, $user->id);
         });
 
+        // NEW: guard so analyser knows $newRoot is not null
+        if (!$newRoot) {
+            return response()->json(['error' => 'Failed to copy folder'], 500);
+        }
+
+        // log on the new copied folder itself
+        ActivityLogger::log(
+            $newRoot,
+            'created',
+            'Folder copied from: ' . $folder->name
+        );
+
+        // log on the target parent folder, if any
+        if ($newRoot->parent_id) {
+            $parent = Folder::find($newRoot->parent_id);
+            if ($parent) {
+                ActivityLogger::log(
+                    $parent,
+                    'updated',
+                    'Copied subfolder into this folder: ' . $newRoot->name
+                );
+            }
+        }
+
         return response()->json([
             'message' => 'Folder copied',
             'folder'  => $newRoot,
         ]);
     }
+
+
 
     protected function cloneFolderTree(Folder $source, ?Folder $targetParent, int $deptId, int $newOwnerId): Folder
     {
@@ -368,11 +423,23 @@ class FolderController extends Controller
 
     public function activity(Folder $folder)
     {
-        $activities = Activity::where('subject_type', Folder::class)
-            ->where('subject_id', $folder->id)
+        $activities = $folder->activities()
             ->with('user:id,name,email')
             ->orderBy('created_at', 'desc')
-            ->get();
+            ->get()
+            ->map(function (Activity $a) {
+                return [
+                    'id'        => $a->id,
+                    'action'    => $a->action,
+                    'details'   => $a->details,
+                    'created_at' => $a->created_at,
+                    'user'      => $a->user ? [
+                        'id'    => $a->user->id,
+                        'name'  => $a->user->name,
+                        'email' => $a->user->email,
+                    ] : null,
+                ];
+            });
 
         return response()->json($activities);
     }

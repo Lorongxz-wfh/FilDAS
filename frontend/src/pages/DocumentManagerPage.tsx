@@ -1284,5 +1284,5 @@ export default function DocumentManagerPage() {
         onConfirm={handleMoveCopyConfirm}
       />
     </>
-  );
+  );  
 }

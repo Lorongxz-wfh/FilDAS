@@ -15,7 +15,7 @@ class DocumentController extends Controller
 {
     public function index(Request $request)
     {
-        $user = $request->user();
+        $user  = $request->user();
         $query = Document::with(['folder', 'uploadedBy', 'owner']);
 
         if ($request->has('department_id')) {
@@ -50,7 +50,7 @@ class DocumentController extends Controller
             });
         }
 
-        $sortBy = $request->get('sort_by', 'uploaded_at');
+        $sortBy    = $request->get('sort_by', 'uploaded_at');
         $sortOrder = $request->get('sort_order', 'desc');
         $query->orderBy($sortBy, $sortOrder);
 
@@ -85,11 +85,11 @@ class DocumentController extends Controller
             return response()->json(['error' => 'Failed to store file'], 500);
         }
 
-        $baseFolderId = $validated['folder_id'] ?? null;
+        $baseFolderId     = $validated['folder_id'] ?? null;
         $baseDepartmentId = null;
 
         if ($baseFolderId) {
-            $baseFolder = Folder::findOrFail($baseFolderId);
+            $baseFolder       = Folder::findOrFail($baseFolderId);
             $baseDepartmentId = $baseFolder->department_id;
         } else {
             $baseDepartmentId = $request->input('department_id');
@@ -140,10 +140,22 @@ class DocumentController extends Controller
             'uploaded_at'       => now(),
         ]);
 
-        // LOG ACTIVITY
+        // Log on the document itself
         ActivityLogger::log($document, 'uploaded');
 
-        return response()->json($document->load(['folder', 'uploadedBy', 'owner']), 201);
+        // Also log on parent folder if the document is inside one
+        if ($document->folder_id && ($parentFolder = Folder::find($document->folder_id))) {
+            ActivityLogger::log(
+                $parentFolder,
+                'updated',
+                'Uploaded document: ' . ($document->title ?: $document->original_filename)
+            );
+        }
+
+        return response()->json(
+            $document->load(['folder', 'uploadedBy', 'owner']),
+            201
+        );
     }
 
     public function show(Document $document)
@@ -170,8 +182,17 @@ class DocumentController extends Controller
 
     public function destroy(Document $document)
     {
-        // LOG ACTIVITY (before delete)
-        ActivityLogger::log($document, 'deleted');
+        // log on document itself
+        ActivityLogger::log($document, 'deleted', 'Document deleted');
+
+        // log on parent folder, if any
+        if ($document->folder_id && ($parent = Folder::find($document->folder_id))) {
+            ActivityLogger::log(
+                $parent,
+                'updated',
+                'Deleted document: ' . ($document->title ?: $document->original_filename)
+            );
+        }
 
         $disk = Storage::disk('fildas_docs');
 
@@ -339,7 +360,7 @@ class DocumentController extends Controller
             'target_department_id' => 'nullable|exists:departments,id',
         ]);
 
-        $isSuper = $user->isAdmin() && $user->role?->name === 'super_admin';
+        $isSuper  = $user->isAdmin() && $user->role?->name === 'super_admin';
         $sameDept = $document->department_id === $user->department_id;
 
         if (!$isSuper && !$sameDept) {
@@ -347,11 +368,11 @@ class DocumentController extends Controller
         }
 
         $targetFolder = null;
-        $newDeptId = $document->department_id;
+        $newDeptId    = $document->department_id;
 
         if (!empty($data['target_folder_id'])) {
             $targetFolder = Folder::findOrFail($data['target_folder_id']);
-            $newDeptId = $targetFolder->department_id;
+            $newDeptId    = $targetFolder->department_id;
         } elseif (!empty($data['target_department_id'])) {
             $newDeptId = (int) $data['target_department_id'];
         }
@@ -366,11 +387,26 @@ class DocumentController extends Controller
         }
         $document->save();
 
-        // LOG ACTIVITY
-        $details = $targetFolder ? "Moved to folder: {$targetFolder->name}" : "Moved to department root";
+        $details = $targetFolder
+            ? "Moved to folder: {$targetFolder->name}"
+            : "Moved to department root";
+
+        // log on document
         ActivityLogger::log($document, 'updated', $details);
 
-        return response()->json(['message' => 'Document moved', 'document' => $document->fresh()]);
+        // log on target folder, if any
+        if ($targetFolder) {
+            ActivityLogger::log(
+                $targetFolder,
+                'updated',
+                'Document moved here: ' . ($document->title ?: $document->original_filename)
+            );
+        }
+
+        return response()->json([
+            'message'  => 'Document moved',
+            'document' => $document->fresh(),
+        ]);
     }
 
     public function copy(Request $request, Document $document)
@@ -406,16 +442,47 @@ class DocumentController extends Controller
             'uploaded_at'       => now(),
         ]);
 
-        return response()->json(['message' => 'Document copied', 'document' => $copy->load(['folder', 'uploadedBy', 'owner'])]);
+        // log on new document
+        ActivityLogger::log(
+            $copy,
+            'created',
+            'Document copied from: ' . ($document->title ?: $document->original_filename)
+        );
+
+        // log on parent folder, if any
+        if ($copy->folder_id && ($parent = Folder::find($copy->folder_id))) {
+            ActivityLogger::log(
+                $parent,
+                'updated',
+                'Copied document into this folder: ' . ($copy->title ?: $copy->original_filename)
+            );
+        }
+
+        return response()->json([
+            'message'  => 'Document copied',
+            'document' => $copy->load(['folder', 'uploadedBy', 'owner']),
+        ]);
     }
 
     public function activity(Document $document)
     {
-        $activities = Activity::where('subject_type', Document::class)
-            ->where('subject_id', $document->id)
+        $activities = $document->activities()
             ->with('user:id,name,email')
             ->orderBy('created_at', 'desc')
-            ->get();
+            ->get()
+            ->map(function (Activity $a) {
+                return [
+                    'id'        => $a->id,
+                    'action'    => $a->action,
+                    'details'   => $a->details,
+                    'created_at' => $a->created_at,
+                    'user'      => $a->user ? [
+                        'id'    => $a->user->id,
+                        'name'  => $a->user->name,
+                        'email' => $a->user->email,
+                    ] : null,
+                ];
+            });
 
         return response()->json($activities);
     }
