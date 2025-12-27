@@ -16,11 +16,11 @@ import { RenameModal } from "../components/documents/RenameModal";
 import { SharedMoveCopyModal } from "../components/documents/SharedMoveCopyModal";
 
 import { useDepartmentTree } from "../lib/useDepartmentTree";
+
 import type {
   Department,
   FolderRow as DeptFolderRow,
 } from "../types/documents";
-
 
 type LayoutContext = {
   user: {
@@ -54,14 +54,13 @@ type SharedFolder = {
 };
 
 export default function SharedFilesPage() {
+  // ---------- context / hooks ----------
+
   const { user, isAdmin } = useOutletContext<LayoutContext>();
 
-  const { folders: deptFolders, currentDepartment: userDept } =
-    useDepartmentTree(user.department_id ?? null);
-
-
-  // TEMP: debug logs
-  console.log("user.department_id", user.department_id);
+  const { folders: deptFolders, loading: deptLoading } = useDepartmentTree(
+    user.department_id ?? null
+  );
 
   // ---------- navigation state (breadcrumbs, current context) ----------
 
@@ -73,16 +72,18 @@ export default function SharedFilesPage() {
 
   const [folders, setFolders] = useState<SharedFolder[]>([]);
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
-  console.log(
-    "shared editor top-level folders",
-    folders.filter((f) => f.permission === "editor" && f.parent_id === null)
-  );
-  console.log(
-    "shared editor child folders",
-    folders.filter((f) => f.permission === "editor" && f.parent_id !== null)
-  );
 
   const [folderChildren, setFolderChildren] = useState<SharedFolder[]>([]);
+  console.log(
+    "PAGE folderChildren:",
+    folderChildren.map((f) => ({
+      id: f.id,
+      name: f.name,
+      parent_id: f.parent_id,
+      permission: f.permission,
+    }))
+  );
+
   const [folderDocs, setFolderDocs] = useState<DocumentRow[]>([]);
   const [allSharedDocs, setAllSharedDocs] = useState<DocumentRow[]>([]);
 
@@ -115,6 +116,7 @@ export default function SharedFilesPage() {
   const [sharedUploadMode, setSharedUploadMode] = useState<"files" | "folder">(
     "files"
   );
+
   const [sharedNewFolderOpen, setSharedNewFolderOpen] = useState(false);
   const [sharedCreatingFolder, setSharedCreatingFolder] = useState(false);
   const [sharedNewFolderName, setSharedNewFolderName] = useState("");
@@ -133,6 +135,7 @@ export default function SharedFilesPage() {
   const [sharedPendingAction, setSharedPendingAction] = useState<
     "move" | "copy" | null
   >(null);
+
   const [sharedMoveCopyTargetFolderId, setSharedMoveCopyTargetFolderId] =
     useState<number | null>(null);
 
@@ -212,6 +215,8 @@ export default function SharedFilesPage() {
       const subFoldersRaw = (subFoldersRes.data?.data ??
         subFoldersRes.data ??
         []) as any[];
+
+      console.log("API subFoldersRaw for", folder.name, subFoldersRaw);
 
       const docsData = (docsRes.data?.data ?? docsRes.data ?? []) as any[];
 
@@ -723,6 +728,9 @@ export default function SharedFilesPage() {
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   };
+
+  // shared folders + currently loaded children for the move/copy modal
+  const sharedFoldersForModal: SharedFolder[] = [...folders, ...folderChildren];
 
   // ---------- UI ----------
 
@@ -1396,8 +1404,9 @@ export default function SharedFilesPage() {
         open={sharedMoveCopyOpen && !!sharedPendingAction}
         mode={sharedPendingAction as "move" | "copy"}
         userDepartmentId={user.department_id ?? null}
-        departmentFolders={deptFolders as any}
-        sharedFolders={folders as any}
+        departmentFolders={deptFolders}
+        departmentLoading={deptLoading}
+        sharedFolders={sharedFoldersForModal}
         onClose={() => {
           setSharedMoveCopyOpen(false);
           setSharedPendingAction(null);

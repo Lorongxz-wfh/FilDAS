@@ -20,12 +20,13 @@ export function useDepartmentTree(userDepartmentId: number | null) {
     try {
       const [folderRes, docRes] = await Promise.all([
         api.get("/folders", {
-          params: { department_id: dept.id, parent_id: null },
+          params: { department_id: dept.id },
         }),
         api.get("/documents", {
           params: { department_id: dept.id, folder_id: null },
         }),
       ]);
+
       const fs: FolderRow[] = folderRes.data.data ?? folderRes.data;
       const docs: DocumentRow[] = docRes.data.data ?? docRes.data;
 
@@ -33,6 +34,7 @@ export function useDepartmentTree(userDepartmentId: number | null) {
         ...prev.filter((f) => f.department_id !== dept.id),
         ...fs,
       ]);
+
       setDocuments((prev) => [
         ...prev.filter(
           (d) => d.department_id !== dept.id || d.folder_id !== null
@@ -47,6 +49,9 @@ export function useDepartmentTree(userDepartmentId: number | null) {
     }
   };
 
+  const getFolderChildren = (parentId: number | null) =>
+    folders.filter((f) => f.parent_id === parentId);
+
   useEffect(() => {
     const init = async () => {
       if (!userDepartmentId) return;
@@ -56,8 +61,10 @@ export function useDepartmentTree(userDepartmentId: number | null) {
         const deptRes = await api.get("/departments");
         const deptItems: Department[] = deptRes.data.data ?? deptRes.data;
         setDepartments(deptItems);
+
         const dept =
           deptItems.find((d) => d.id === userDepartmentId) || null;
+
         if (dept) {
           await loadDepartmentContents(dept);
         }
@@ -80,5 +87,6 @@ export function useDepartmentTree(userDepartmentId: number | null) {
     loading,
     error,
     loadDepartmentContents,
+    getFolderChildren,
   };
 }

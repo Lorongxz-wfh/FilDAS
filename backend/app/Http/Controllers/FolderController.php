@@ -23,8 +23,8 @@ class FolderController extends Controller
         if ($request->filled('department_id')) {
             $query->where('department_id', $request->department_id);
         }
-
-        if ($request->has('parent_id')) {
+            
+        if ($request->filled('parent_id')) {
             $query->where('parent_id', $request->parent_id);
         }
 
