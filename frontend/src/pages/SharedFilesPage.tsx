@@ -12,13 +12,22 @@ import { DropdownMenu } from "../components/ui/DropdownMenu";
 import { DocumentUploadModal } from "../components/documents/DocumentUploadModal";
 import { NewFolderModal } from "../components/documents/NewFolderModal";
 import { RenameModal } from "../components/documents/RenameModal";
-import { MoveCopyModal } from "../components/documents/MoveCopyModal";
+// import { MoveCopyModal } from "../components/documents/MoveCopyModal";
+import { SharedMoveCopyModal } from "../components/documents/SharedMoveCopyModal";
+
+import { useDepartmentTree } from "../lib/useDepartmentTree";
+import type {
+  Department,
+  FolderRow as DeptFolderRow,
+} from "../types/documents";
+
 
 type LayoutContext = {
   user: {
     id: number;
     name: string;
     email: string;
+    department_id: number | null; // add this line
   };
   isAdmin: boolean;
 };
@@ -41,11 +50,18 @@ type SharedFolder = {
   department_name?: string | null;
   owner_id: number;
   owner_name?: string | null;
-  permission: "viewer" | "editor" | string;
+  permission: "viewer" | "editor";
 };
 
 export default function SharedFilesPage() {
   const { user, isAdmin } = useOutletContext<LayoutContext>();
+
+  const { folders: deptFolders, currentDepartment: userDept } =
+    useDepartmentTree(user.department_id ?? null);
+
+
+  // TEMP: debug logs
+  console.log("user.department_id", user.department_id);
 
   // ---------- navigation state (breadcrumbs, current context) ----------
 
@@ -57,6 +73,15 @@ export default function SharedFilesPage() {
 
   const [folders, setFolders] = useState<SharedFolder[]>([]);
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
+  console.log(
+    "shared editor top-level folders",
+    folders.filter((f) => f.permission === "editor" && f.parent_id === null)
+  );
+  console.log(
+    "shared editor child folders",
+    folders.filter((f) => f.permission === "editor" && f.parent_id !== null)
+  );
+
   const [folderChildren, setFolderChildren] = useState<SharedFolder[]>([]);
   const [folderDocs, setFolderDocs] = useState<DocumentRow[]>([]);
   const [allSharedDocs, setAllSharedDocs] = useState<DocumentRow[]>([]);
@@ -85,6 +110,7 @@ export default function SharedFilesPage() {
   const [detailsWidth, setDetailsWidth] = useState(320); // px
 
   // ---------- modals state ----------
+
   const [sharedUploadOpen, setSharedUploadOpen] = useState(false);
   const [sharedUploadMode, setSharedUploadMode] = useState<"files" | "folder">(
     "files"
@@ -231,7 +257,6 @@ export default function SharedFilesPage() {
 
   // ---------- effects ----------
 
-  // initial load
   useEffect(() => {
     loadTopLevelShared();
   }, []);
@@ -244,7 +269,7 @@ export default function SharedFilesPage() {
     return () => clearTimeout(handle);
   }, [searchQuery]);
 
-  // preview (keep simple: just use stream endpoint; no activity here)
+  // preview (using /documents/{id}/preview)
   useEffect(() => {
     const loadPreview = async () => {
       if (!detailsOpen || !selectedItem || selectedItem.kind !== "file") {
@@ -288,7 +313,6 @@ export default function SharedFilesPage() {
     let source: SharedFolder[];
 
     if (!currentFolder) {
-      // root
       source = q
         ? folders.filter((f) => f.name.toLowerCase().includes(q))
         : folders.filter((f) => f.parent_id === null);
@@ -449,6 +473,7 @@ export default function SharedFilesPage() {
       alert("Failed to download file.");
     }
   };
+
   const handleDownloadFolder = async (folder: SharedFolder) => {
     try {
       const res = await api.get(`/folders/${folder.id}/download`, {
@@ -597,49 +622,56 @@ export default function SharedFilesPage() {
   };
 
   const handleSharedMoveCopyConfirm = async (targetFolderId: number | null) => {
+    console.log("handleSharedMoveCopyConfirm", {
+      targetFolderId,
+      selectedItem,
+      sharedPendingAction,
+    });
     if (!selectedItem || !sharedPendingAction) return;
+
     try {
       if (selectedItem.kind === "file") {
         const doc = selectedItem.data as DocumentRow;
-        await api.post(
-          `/${selectedItem.kind}s/${doc.id}/${sharedPendingAction}`,
-          {
-            target_folder_id: targetFolderId,
-          }
-        );
+        await api.post(`/documents/${doc.id}/${sharedPendingAction}`, {
+          target_folder_id: targetFolderId,
+        });
       } else {
         const folder = selectedItem.data as SharedFolder;
-        await api.post(
-          `/${selectedItem.kind}s/${folder.id}/${sharedPendingAction}`,
-          {
-            target_folder_id: targetFolderId,
-          }
-        );
+        await api.post(`/folders/${folder.id}/${sharedPendingAction}`, {
+          target_folder_id: targetFolderId,
+        });
       }
+
       if (currentFolder) {
         await loadSharedFolderContents(currentFolder);
       } else {
         await loadTopLevelShared();
       }
-    } catch (e) {
-      console.error(e);
-      alert(`Failed to ${sharedPendingAction} item.`);
+
+      alert(
+        `${sharedPendingAction === "move" ? "Moved" : "Copied"} successfully!`
+      );
+    } catch (error: any) {
+      console.error(error);
+      alert(
+        `Failed to ${sharedPendingAction}: ${
+          error.response?.data?.message || "Unknown error"
+        }`
+      );
     } finally {
       setSharedMoveCopyOpen(false);
       setSharedPendingAction(null);
+      setSharedMoveCopyTargetFolderId(null);
     }
   };
 
   const isOwner = (selectedItem?.data as any)?.owner_id === user.id;
 
-  // permission for the *currently relevant* context
   const currentPermission = (() => {
-    // If a folder is open, its permission controls uploads and top toolbar
     if (currentFolder) {
       return currentFolder.permission as "viewer" | "editor" | null;
     }
 
-    // If no folder is open, but a shared folder row is selected at root
     if (selectedItem?.kind === "folder") {
       return (selectedItem.data as any).permission as
         | "viewer"
@@ -647,7 +679,6 @@ export default function SharedFilesPage() {
         | null;
     }
 
-    // If a shared document row is selected
     if (selectedItem?.kind === "file") {
       return (selectedItem.data as any).share_permission as
         | "viewer"
@@ -658,7 +689,6 @@ export default function SharedFilesPage() {
     return null;
   })();
 
-  // Only treat as editor if explicitly editor, or admin/owner
   const canEditContext = currentPermission === "editor" || isOwner || isAdmin;
 
   const isEditor = canEditContext;
@@ -699,12 +729,10 @@ export default function SharedFilesPage() {
   return (
     <div>
       <h1 className="mb-2 text-2xl font-semibold text-white">Shared files</h1>
-
       <main>
         {/* toolbar */}
         <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          {/* left: upload buttons disabled in shared view */}
-          {/* LEFT: uploads + new folder (editors only, inside folder) */}
+          {/* left: uploads + new folder (editors only, inside folder) */}
           <div className="flex h-8.5 items-center">
             <div className="flex flex-wrap gap-2">
               {currentFolder && isEditor && (
@@ -746,7 +774,6 @@ export default function SharedFilesPage() {
             <span className="mr-2 text-slate-500">{toolbarLabel}</span>
             {selectedIsFileOrFolder && (
               <div className="flex flex-wrap items-center gap-2">
-                {/* Download */}
                 <Button
                   size="xs"
                   onClick={() =>
@@ -760,7 +787,6 @@ export default function SharedFilesPage() {
 
                 {isEditor && (
                   <>
-                    {/* Rename */}
                     <Button
                       size="xs"
                       onClick={() => {
@@ -781,7 +807,6 @@ export default function SharedFilesPage() {
                       Rename
                     </Button>
 
-                    {/* Copy */}
                     <Button
                       size="xs"
                       onClick={() => {
@@ -792,7 +817,6 @@ export default function SharedFilesPage() {
                       Copy
                     </Button>
 
-                    {/* Move */}
                     <Button
                       size="xs"
                       onClick={() => {
@@ -803,11 +827,7 @@ export default function SharedFilesPage() {
                       Move
                     </Button>
 
-                    {/* Delete (red) */}
-                    <Button
-                      size="xs"
-                      onClick={handleSharedDeleteSelected}
-                    >
+                    <Button size="xs" onClick={handleSharedDeleteSelected}>
                       Delete
                     </Button>
                   </>
@@ -1372,12 +1392,12 @@ export default function SharedFilesPage() {
         onSubmit={handleSharedRenameSubmit}
         onChangeName={setSharedRenameName}
       />
-      <MoveCopyModal
+      <SharedMoveCopyModal
         open={sharedMoveCopyOpen && !!sharedPendingAction}
-        mode={sharedPendingAction || "move"}
-        currentDepartment={null} // shared folders don't need dept
-        folders={folders}
-        currentFolder={currentFolder}
+        mode={sharedPendingAction as "move" | "copy"}
+        userDepartmentId={user.department_id ?? null}
+        departmentFolders={deptFolders as any}
+        sharedFolders={folders as any}
         onClose={() => {
           setSharedMoveCopyOpen(false);
           setSharedPendingAction(null);

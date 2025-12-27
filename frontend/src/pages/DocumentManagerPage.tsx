@@ -217,6 +217,8 @@ export default function DocumentManagerPage() {
   const { user, isAdmin, isSuperAdmin } = useOutletContext<LayoutContext>();
   const [departments, setDepartments] = useState<Department[]>([]);
   const [folders, setFolders] = useState<FolderRow[]>([]);
+  console.log("doc manager folders sample", folders.slice(0, 10));
+  
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
 
   const [currentDepartment, setCurrentDepartment] = useState<Department | null>(

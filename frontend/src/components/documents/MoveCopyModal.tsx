@@ -29,15 +29,19 @@ export function MoveCopyModal({
     number | null
   >(null);
 
-  // build tree of folders in this department
   const roots = useMemo<TreeNode[]>(() => {
-    if (!currentDepartment) return [];
+    // If there is a currentDepartment, filter folders by that dept.
+    // In shared view (currentDepartment === null), use all folders.
+    let sourceFolders = folders;
 
-    const deptFolders = folders.filter(
-      (f) => f.department_id === currentDepartment.id
-    );
+    if (currentDepartment) {
+      sourceFolders = folders.filter(
+        (f) => f.department_id === currentDepartment.id
+      );
+    }
+
     const byId = new Map<number, TreeNode>();
-    deptFolders.forEach((f) => byId.set(f.id, { ...f, children: [] }));
+    sourceFolders.forEach((f) => byId.set(f.id, { ...f, children: [] }));
 
     const rootNodes: TreeNode[] = [];
     byId.forEach((node) => {
@@ -57,8 +61,6 @@ export function MoveCopyModal({
     return rootNodes;
   }, [folders, currentDepartment]);
 
-  if (!currentDepartment) return null;
-
   const title = mode === "move" ? "Move to..." : "Copy to...";
 
   const toggleExpanded = (id: number) => {
@@ -66,6 +68,7 @@ export function MoveCopyModal({
   };
 
   const handleConfirm = () => {
+    console.log("MoveCopyModal confirm", selectedDestinationId);
     onConfirm(selectedDestinationId);
   };
 
@@ -129,7 +132,8 @@ export function MoveCopyModal({
     <Modal open={open} title={title} onClose={onClose}>
       <div className="space-y-3 text-sm">
         <p className="text-xs text-slate-300">
-          Choose a destination folder in {currentDepartment.name}.
+          Choose a destination folder in{" "}
+          {currentDepartment ? currentDepartment.name : "shared folders"}.
         </p>
 
         <div className="max-h-72 overflow-auto rounded border border-slate-800 bg-slate-900/60">
@@ -169,7 +173,7 @@ export function MoveCopyModal({
             size="xs"
             variant="primary"
             onClick={handleConfirm}
-            disabled={selectedDestinationId === undefined}
+            disabled={false} // just for testing
           >
             {mode === "move" ? "Move here" : "Copy here"}
           </Button>
