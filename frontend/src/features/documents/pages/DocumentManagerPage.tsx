@@ -8,9 +8,8 @@ import { useDocumentPreview } from "../hooks/useDocumentPreview";
 import { useDocumentNavigation } from "../hooks/useDocumentNavigation";
 import { applySort, computeVisibleItems } from "../../../lib/documentsSorting";
 import { formatSize } from "../lib/formatSize";
-
-
-
+import { useResizableDetails } from "../hooks/useResizableDetails";
+import { useItemRenameDelete } from "../hooks/useItemRenameDelete";
 
 
 type LayoutContext = {
@@ -84,9 +83,31 @@ export default function DocumentManagerPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [sortMode, setSortMode] = useState<SortMode>("alpha");
 
+    const {
+      selectedItem,
+      setSelectedItem,
+      detailsOpen,
+      setDetailsOpen,
+      renameOpen,
+      setRenameOpen,
+      renameName,
+      setRenameName,
+      renaming,
+      renameError,
+      setRenameError,
+      getItemName,
+      handleRenameSubmit,
+      handleDeleteSelected,
+    } = useItemRenameDelete({
+      currentDepartment,
+      currentFolder,
+      setCurrentDepartment,
+      setCurrentFolder,
+      setDepartments,
+      setFolders,
+      setDocuments,
+    });
 
-  const [selectedItem, setSelectedItem] = useState<Item | null>(null);
-  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
@@ -97,12 +118,8 @@ export default function DocumentManagerPage() {
   const [newFolderName, setNewFolderName] = useState("");
   const [folderError, setFolderError] = useState<string | null>(null);
 
-  const [renameOpen, setRenameOpen] = useState(false);
-  const [renameName, setRenameName] = useState("");
-  const [renaming, setRenaming] = useState(false);
-  const [renameError, setRenameError] = useState<string | null>(null);
-
-  const [detailsWidth, setDetailsWidth] = useState(320); // px
+  const { detailsWidth, setDetailsWidth, handleDetailsResizeStart } =
+    useResizableDetails(320);
 
   const { previewUrl, previewLoading } = useDocumentPreview({
     detailsOpen,
@@ -113,38 +130,13 @@ export default function DocumentManagerPage() {
   const [moveCopyTargetFolderId, setMoveCopyTargetFolderId] = useState<
     number | null
   >(null);
+
   const [pendingAction, setPendingAction] = useState<"move" | "copy" | null>(
     null
   );
   const [moveCopyOpen, setMoveCopyOpen] = useState(false);
 
   // ---------- data loading helpers ----------
-
-
-
-  const handleDetailsResizeStart = () => {
-    const startX =
-      window.event instanceof MouseEvent ? window.event.clientX : 0;
-    const startWidth = detailsWidth;
-
-    const onMove = (e: MouseEvent) => {
-      const delta = startX - e.clientX;
-      const next = Math.min(Math.max(startWidth + delta, 260), 520);
-      setDetailsWidth(next);
-    };
-
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
-
-
-
-
 
   const handleDownload = async (item: Item) => {
     if (item.kind !== "file") return;
@@ -190,44 +182,6 @@ export default function DocumentManagerPage() {
     } catch (e) {
       console.error(e);
       alert("Failed to download folder.");
-    }
-  };
-
-  const handleDeleteSelected = async () => {
-    if (!selectedItem) return;
-
-    if (!window.confirm(`Move this ${selectedItem.kind} to trash?`)) return;
-
-    try {
-      if (selectedItem.kind === "file") {
-        const doc = selectedItem.data as DocumentRow;
-        await api.delete(`/documents/${doc.id}`);
-        setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
-      } else if (selectedItem.kind === "folder") {
-        const folder = selectedItem.data as FolderRow;
-        await api.delete(`/folders/${folder.id}`);
-        setFolders((prev) => prev.filter((f) => f.id !== folder.id));
-        setDocuments((prev) => prev.filter((d) => d.folder_id !== folder.id));
-        if (currentFolder && currentFolder.id === folder.id) {
-          setCurrentFolder(null);
-        }
-      } else if (selectedItem.kind === "department") {
-        const dept = selectedItem.data as Department;
-        await api.delete(`/departments/${dept.id}`);
-        setDepartments((prev) => prev.filter((d) => d.id !== dept.id));
-        setFolders((prev) => prev.filter((f) => f.department_id !== dept.id));
-        setDocuments((prev) => prev.filter((d) => d.department_id !== dept.id));
-        if (currentDepartment && currentDepartment.id === dept.id) {
-          setCurrentDepartment(null);
-          setCurrentFolder(null);
-        }
-      }
-
-      setSelectedItem(null);
-      setDetailsOpen(false);
-    } catch (err) {
-      console.error(err);
-      alert("Failed to delete item on server.");
     }
   };
 
@@ -366,74 +320,6 @@ export default function DocumentManagerPage() {
     }
   };
 
-  const getItemName = (item: Item | null) => {
-    if (!item) return "";
-    if (item.kind === "file") {
-      const d = item.data as DocumentRow;
-      return d.title || d.original_filename;
-    }
-    return (item.data as any).name;
-  };
-
-  const handleRenameSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedItem) return;
-    const newName = renameName.trim();
-    if (!newName) {
-      setRenameError("Name is required.");
-      return;
-    }
-
-    setRenaming(true);
-    setRenameError(null);
-
-    try {
-      if (selectedItem.kind === "file") {
-        const doc = selectedItem.data as DocumentRow;
-        const res = await api.patch(`/documents/${doc.id}`, {
-          title: newName,
-        });
-        const updated: DocumentRow = res.data.document ?? res.data;
-        setDocuments((prev) =>
-          prev.map((d) => (d.id === updated.id ? updated : d))
-        );
-        setSelectedItem({ kind: "file", data: updated });
-      } else if (selectedItem.kind === "folder") {
-        const folder = selectedItem.data as FolderRow;
-        const res = await api.patch(`/folders/${folder.id}`, {
-          name: newName,
-        });
-        const updated: FolderRow = res.data.folder ?? res.data;
-        setFolders((prev) =>
-          prev.map((f) => (f.id === updated.id ? updated : f))
-        );
-        setSelectedItem({ kind: "folder", data: updated });
-        if (currentFolder && currentFolder.id === updated.id) {
-          setCurrentFolder(updated);
-        }
-      } else if (selectedItem.kind === "department") {
-        const dept = selectedItem.data as Department;
-        const res = await api.patch(`/departments/${dept.id}`, {
-          name: newName,
-        });
-        const updated: Department = res.data.department ?? res.data;
-        setDepartments((prev) =>
-          prev.map((d) => (d.id === updated.id ? updated : d))
-        );
-        setSelectedItem({ kind: "department", data: updated });
-        if (currentDepartment && currentDepartment.id === updated.id) {
-          setCurrentDepartment(updated);
-        }
-      }
-
-      setRenameOpen(false);
-    } catch (err) {
-      console.error(err);
-      setRenameError("Failed to rename item.");
-    } finally {
-      setRenaming(false);
-    }
-  };
 
   const toolbarLabel =
     selectedItem == null

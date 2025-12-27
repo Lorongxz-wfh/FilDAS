@@ -12,7 +12,6 @@ import { DropdownMenu } from "../components/ui/DropdownMenu";
 import { DocumentUploadModal } from "../components/documents/DocumentUploadModal";
 import { NewFolderModal } from "../components/documents/NewFolderModal";
 import { RenameModal } from "../components/documents/RenameModal";
-// import { MoveCopyModal } from "../components/documents/MoveCopyModal";
 import { SharedMoveCopyModal } from "../components/documents/SharedMoveCopyModal";
 
 import { useDepartmentTree } from "../lib/useDepartmentTree";
@@ -22,7 +21,6 @@ import type {
   FolderRow as DeptFolderRow,
 } from "../types/documents";
 
-
 // New Imports are here after refactoring
 import { formatSize } from "../features/documents/lib/formatSize";
 import { useSharedFiles } from "../features/documents/hooks/useSharedFiles";
@@ -30,9 +28,8 @@ import type {
   DocumentRow,
   SharedFolder,
 } from "../features/documents/hooks/useSharedFiles";
-
-
-
+import { isSelectedItem } from "../features/documents/lib/selection";
+import { useSharedRenameDelete } from "../features/documents/hooks/useSharedRenameDelete";
 
 type LayoutContext = {
   user: {
@@ -81,10 +78,6 @@ export default function SharedFilesPage() {
     setViewMode,
     sortMode,
     setSortMode,
-    selectedItem,
-    setSelectedItem,
-    detailsOpen,
-    setDetailsOpen,
     previewUrl,
     setPreviewUrl,
     previewLoading,
@@ -103,14 +96,6 @@ export default function SharedFilesPage() {
     setSharedNewFolderName,
     sharedFolderError,
     setSharedFolderError,
-    sharedRenameOpen,
-    setSharedRenameOpen,
-    sharedRenameName,
-    setSharedRenameName,
-    sharedRenaming,
-    setSharedRenaming,
-    sharedRenameError,
-    setSharedRenameError,
     sharedMoveCopyOpen,
     setSharedMoveCopyOpen,
     sharedPendingAction,
@@ -126,13 +111,51 @@ export default function SharedFilesPage() {
     isAdmin,
   });
 
+    const {
+      selectedItem,
+      setSelectedItem,
+      detailsOpen,
+      setDetailsOpen,
+      sharedRenameOpen,
+      setSharedRenameOpen,
+      sharedRenameName,
+      setSharedRenameName,
+      sharedRenaming,
+      sharedRenameError,
+      setSharedRenameError,
+      getSharedItemName,
+      handleSharedRenameSubmit,
+      handleSharedDeleteSelected,
+    } = useSharedRenameDelete({
+      setAllSharedDocs,
+      setDocuments,
+      setFolderDocs,
+      setFolders,
+      setFolderChildren,
+    });
+
+  
 
   // ---------- helpers ----------
 
-  const isSelected = (kind: Item["kind"], id: number) => {
-    if (!selectedItem) return false;
-    if (selectedItem.kind !== kind) return false;
-    return (selectedItem.data as any).id === id;
+  const handleDetailsResizeStart = () => {
+    const startX =
+      window.event instanceof MouseEvent ? window.event.clientX : 0;
+    const startWidth = detailsWidth;
+
+    const onMove = (e: MouseEvent) => {
+      const delta = startX - e.clientX;
+      const next = Math.min(Math.max(startWidth + delta, 260), 520);
+      setDetailsWidth(next);
+    };
+
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
   };
 
   const handleSelectDocument = (doc: DocumentRow) => {
@@ -217,15 +240,6 @@ export default function SharedFilesPage() {
     }
   };
 
-  const getSharedItemName = (item: Item | null) => {
-    if (!item) return "";
-    if (item.kind === "file") {
-      const d = item.data as DocumentRow;
-      return d.title || d.original_filename || "";
-    }
-    return (item.data as SharedFolder).name;
-  };
-
   const handleSharedCreateFolder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!sharedNewFolderName.trim() || !currentFolder) {
@@ -261,86 +275,6 @@ export default function SharedFilesPage() {
       );
     } finally {
       setSharedCreatingFolder(false);
-    }
-  };
-
-  const handleSharedRenameSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedItem) return;
-
-    const newName = sharedRenameName.trim();
-    if (!newName) {
-      setSharedRenameError("Name is required.");
-      return;
-    }
-
-    setSharedRenaming(true);
-    setSharedRenameError(null);
-
-    try {
-      if (selectedItem.kind === "file") {
-        const doc = selectedItem.data as DocumentRow;
-
-        await api.patch(`/documents/${doc.id}`, { title: newName });
-
-        const updated = { ...doc, title: newName };
-        setAllSharedDocs((prev) =>
-          prev.map((d) => (d.id === doc.id ? updated : d))
-        );
-        setDocuments((prev) =>
-          prev.map((d) => (d.id === doc.id ? updated : d))
-        );
-        setFolderDocs((prev) =>
-          prev.map((d) => (d.id === doc.id ? updated : d))
-        );
-        setSelectedItem({ kind: "file", data: updated as any });
-      } else {
-        const folder = selectedItem.data as SharedFolder;
-
-        await api.patch(`/folders/${folder.id}`, { name: newName });
-
-        const updated = { ...folder, name: newName };
-        setFolders((prev) =>
-          prev.map((f) => (f.id === folder.id ? updated : f))
-        );
-        setFolderChildren((prev) =>
-          prev.map((f) => (f.id === folder.id ? updated : f))
-        );
-        setSelectedItem({ kind: "folder", data: updated as any });
-      }
-
-      setSharedRenameOpen(false);
-    } catch (err: any) {
-      console.error(err);
-      setSharedRenameError(
-        err.response?.data?.message || "Failed to rename item."
-      );
-    } finally {
-      setSharedRenaming(false);
-    }
-  };
-
-  const handleSharedDeleteSelected = async () => {
-    if (!selectedItem) return;
-    if (!window.confirm(`Delete this ${selectedItem.kind}?`)) return;
-    try {
-      if (selectedItem.kind === "file") {
-        const doc = selectedItem.data as DocumentRow;
-        await api.delete(`/documents/${doc.id}`);
-        setAllSharedDocs((prev) => prev.filter((d) => d.id !== doc.id));
-        setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
-        setFolderDocs((prev) => prev.filter((d) => d.id !== doc.id));
-      } else {
-        const folder = selectedItem.data as SharedFolder;
-        await api.delete(`/folders/${folder.id}`);
-        setFolders((prev) => prev.filter((f) => f.id !== folder.id));
-        setFolderChildren((prev) => prev.filter((f) => f.id !== folder.id));
-      }
-      setSelectedItem(null);
-      setDetailsOpen(false);
-    } catch (err) {
-      console.error(err);
-      alert("Failed to delete item.");
     }
   };
 
@@ -426,26 +360,6 @@ export default function SharedFilesPage() {
   const selectedIsFileOrFolder =
     selectedItem &&
     (selectedItem.kind === "file" || selectedItem.kind === "folder");
-
-  const handleDetailsResizeStart = () => {
-    const startX =
-      window.event instanceof MouseEvent ? window.event.clientX : 0;
-    const startWidth = detailsWidth;
-
-    const onMove = (e: MouseEvent) => {
-      const delta = startX - e.clientX;
-      const next = Math.min(Math.max(startWidth + delta, 260), 520);
-      setDetailsWidth(next);
-    };
-
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
 
   // shared folders + currently loaded children for the move/copy modal
   const sharedFoldersForModal: SharedFolder[] = [...folders, ...folderChildren];
@@ -690,7 +604,11 @@ export default function SharedFilesPage() {
                           <Card
                             key={folder.id}
                             selectable
-                            selected={isSelected("folder", folder.id)}
+                            selected={isSelectedItem(
+                              selectedItem,
+                              "folder",
+                              folder.id
+                            )}
                             className="group cursor-pointer"
                             onClick={(e) => {
                               e.preventDefault();
@@ -825,7 +743,11 @@ export default function SharedFilesPage() {
                               <tr
                                 key={folder.id}
                                 className={`cursor-pointer hover:bg-slate-800/60 ${
-                                  isSelected("folder", folder.id)
+                                  isSelectedItem(
+                                    selectedItem,
+                                    "folder",
+                                    folder.id
+                                  )
                                     ? "bg-slate-800/80"
                                     : ""
                                 }`}
@@ -892,7 +814,11 @@ export default function SharedFilesPage() {
                         <Card
                           key={doc.id}
                           selectable
-                          selected={isSelected("file", doc.id)}
+                          selected={isSelectedItem(
+                            selectedItem,
+                            "file",
+                            doc.id
+                          )}
                           className="group cursor-pointer"
                           onClick={(e) => {
                             e.preventDefault();
@@ -1029,7 +955,7 @@ export default function SharedFilesPage() {
                           <tr
                             key={doc.id}
                             className={`cursor-pointer hover:bg-slate-800/60 ${
-                              isSelected("file", doc.id)
+                              isSelectedItem(selectedItem, "file", doc.id)
                                 ? "bg-slate-800/80"
                                 : ""
                             }`}
