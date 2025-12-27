@@ -1,8 +1,17 @@
 // src/pages/DocumentManagerPage.tsx
 import { useEffect, useState } from "react";
 import { useOutletContext } from "react-router-dom";
-import { api } from "../lib/api";
-import { Button } from "../components/ui/Button";
+import { api } from "../../../lib/api";
+import { Button } from "../../../components/ui/Button";
+
+import { useDocumentPreview } from "../hooks/useDocumentPreview";
+import { useDocumentNavigation } from "../hooks/useDocumentNavigation";
+import { applySort, computeVisibleItems } from "../../../lib/documentsSorting";
+import { formatSize } from "../lib/formatSize";
+
+
+
+
 
 type LayoutContext = {
   user: {
@@ -26,14 +35,14 @@ import type {
   ViewMode,
   SortMode,
   Item,
-} from "../types/documents";
-import { DocumentGrid } from "../components/documents/DocumentGrid";
-import { DocumentList } from "../components/documents/DocumentList";
-import { DetailsPanel } from "../components/documents/DetailsPanel";
-import { DocumentUploadModal } from "../components/documents/DocumentUploadModal";
-import { NewFolderModal } from "../components/documents/NewFolderModal";
-import { RenameModal } from "../components/documents/RenameModal";
-import { MoveCopyModal } from "../components/documents/MoveCopyModal";
+} from "../../../types/documents";
+import { DocumentGrid } from "../../../components/documents/DocumentGrid";
+import { DocumentList } from "../../../components/documents/DocumentList";
+import { DetailsPanel } from "../../../components/documents/DetailsPanel";
+import { DocumentUploadModal } from "../../../components/documents/DocumentUploadModal";
+import { NewFolderModal } from "../../../components/documents/NewFolderModal";
+import { RenameModal } from "../../../components/documents/RenameModal";
+import { MoveCopyModal } from "../../../components/documents/MoveCopyModal";
 
 const Loader = () => (
   <div className="flex h-full items-center justify-center py-10">
@@ -41,198 +50,40 @@ const Loader = () => (
   </div>
 );
 
-function applySort(items: Item[], sortMode: SortMode): Item[] {
-  const alphaSort = (a: Item, b: Item) => {
-    const nameA =
-      a.kind === "file"
-        ? (a.data as DocumentRow).title ||
-          (a.data as DocumentRow).original_filename
-        : (a.data as any).name;
-    const nameB =
-      b.kind === "file"
-        ? (b.data as DocumentRow).title ||
-          (b.data as DocumentRow).original_filename
-        : (b.data as any).name;
-    return nameA.localeCompare(nameB);
-  };
+export default function DocumentManagerPage() {
+  const { user, isAdmin, isSuperAdmin } = useOutletContext<LayoutContext>();
 
-  if (sortMode === "alpha") return [...items].sort(alphaSort);
-
-  if (sortMode === "uploaded_at") {
-    const foldersOnly = items.filter((i) => i.kind === "folder");
-    const filesOnly = items
-      .filter((i) => i.kind === "file")
-      .sort(
-        (a, b) =>
-          new Date((b.data as DocumentRow).uploaded_at).getTime() -
-          new Date((a.data as DocumentRow).uploaded_at).getTime()
-      );
-    return [...foldersOnly, ...filesOnly];
-  }
-
-  if (sortMode === "recent") {
-    return [...items].sort((a, b) => {
-      const getOpened = (item: Item) => {
-        if (item.kind === "file") {
-          return (item.data as DocumentRow).last_opened_at;
-        }
-        if (item.kind === "folder") {
-          return (item.data as FolderRow).last_opened_at;
-        }
-        return (item.data as Department).last_opened_at;
-      };
-      const aTime = getOpened(a)
-        ? new Date(getOpened(a) as string).getTime()
-        : 0;
-      const bTime = getOpened(b)
-        ? new Date(getOpened(b) as string).getTime()
-        : 0;
-      return bTime - aTime;
-    });
-  }
-
-  if (sortMode === "size") {
-    const foldersOnly = items.filter((i) => i.kind === "folder");
-    const filesOnly = items
-      .filter((i) => i.kind === "file")
-      .sort(
-        (a, b) =>
-          (b.data as DocumentRow).size_bytes -
-          (a.data as DocumentRow).size_bytes
-      );
-    return [...foldersOnly, ...filesOnly];
-  }
-
-  return items;
-}
-
-function computeVisibleItems(params: {
-  currentDepartment: Department | null;
-  currentFolder: FolderRow | null;
-  departments: Department[];
-  folders: FolderRow[];
-  documents: DocumentRow[];
-  sortMode: SortMode;
-  searchQuery: string;
-  isSuperAdmin: boolean;
-}): Item[] {
   const {
-    currentDepartment,
-    currentFolder,
     departments,
     folders,
     documents,
-    sortMode,
+    setDepartments,
+    setFolders,
+    setDocuments,
+    currentDepartment,
+    currentFolder,
+    setCurrentDepartment,
+    setCurrentFolder,
+    loading,
+    error,
+    setError,
     searchQuery,
+    setSearchQuery,
+    debouncedSearch,
+    handleGoBack,
+    folderAncestors,
+    loadDepartmentContents,
+    loadFolderContents,
+  } = useDocumentNavigation({
     isSuperAdmin,
-  } = params;
-
-  // Super Admin only: Departments list
-  if (!currentDepartment) {
-    if (!isSuperAdmin) {
-      return [];
-    }
-
-    let list = departments.map<Item>((d) => ({
-      kind: "department",
-      data: d,
-    }));
-    if (sortMode === "alpha") {
-      list = list.sort((a, b) =>
-        (a.data as Department).name.localeCompare((b.data as Department).name)
-      );
-    }
-    return list;
-  }
-
-  const directFolders = folders.filter(
-    (f) =>
-      f.department_id === currentDepartment.id &&
-      f.parent_id === (currentFolder ? currentFolder.id : null)
-  );
-  const directFiles = documents.filter(
-    (d) =>
-      d.department_id === currentDepartment.id &&
-      (currentFolder ? d.folder_id === currentFolder.id : !d.folder_id)
-  );
-
-  let items: Item[] = [
-    ...directFolders.map<Item>((f) => ({ kind: "folder", data: f })),
-    ...directFiles.map<Item>((d) => ({ kind: "file", data: d })),
-  ];
-
-  items = items.filter((item, index, self) => {
-    const id = (item.data as any).id;
-    const key = `${item.kind}-${id}`;
-    return (
-      index ===
-      self.findIndex((other) => {
-        const otherId = (other.data as any).id;
-        return `${other.kind}-${otherId}` === key;
-      })
-    );
+    userDepartmentId: user.department_id,
   });
 
-  const q = searchQuery.trim().toLowerCase();
-  if (!q) return applySort(items, sortMode);
-
-  const allDeptFolders = folders.filter(
-    (f) => f.department_id === currentDepartment.id
-  );
-  const allDeptFiles = documents.filter(
-    (d) => d.department_id === currentDepartment.id
-  );
-
-  let globalItems: Item[] = [
-    ...allDeptFolders.map<Item>((f) => ({ kind: "folder", data: f })),
-    ...allDeptFiles.map<Item>((d) => ({ kind: "file", data: d })),
-  ];
-
-  globalItems = globalItems.filter((item) => {
-    if (item.kind === "file") {
-      const d = item.data as DocumentRow;
-      const name = (d.title || d.original_filename || "").toLowerCase();
-      return name.includes(q);
-    }
-    const name = (item.data as any).name.toLowerCase();
-    return name.includes(q);
-  });
-
-  globalItems = globalItems.filter((item, index, self) => {
-    const id = (item.data as any).id;
-    const key = `${item.kind}-${id}`;
-    return (
-      index ===
-      self.findIndex((other) => {
-        const otherId = (other.data as any).id;
-        return `${other.kind}-${otherId}` === key;
-      })
-    );
-  });
-
-  return applySort(globalItems, sortMode);
-}
-
-export default function DocumentManagerPage() {
-  const { user, isAdmin, isSuperAdmin } = useOutletContext<LayoutContext>();
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [folders, setFolders] = useState<FolderRow[]>([]);
   console.log("doc manager folders sample", folders.slice(0, 10));
-  
-  const [documents, setDocuments] = useState<DocumentRow[]>([]);
-
-  const [currentDepartment, setCurrentDepartment] = useState<Department | null>(
-    null
-  );
-  const [currentFolder, setCurrentFolder] = useState<FolderRow | null>(null);
 
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [sortMode, setSortMode] = useState<SortMode>("alpha");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
 
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -246,15 +97,17 @@ export default function DocumentManagerPage() {
   const [newFolderName, setNewFolderName] = useState("");
   const [folderError, setFolderError] = useState<string | null>(null);
 
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameName, setRenameName] = useState("");
   const [renaming, setRenaming] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
 
-  const [previewLoading, setPreviewLoading] = useState(false);
-
   const [detailsWidth, setDetailsWidth] = useState(320); // px
+
+  const { previewUrl, previewLoading } = useDocumentPreview({
+    detailsOpen,
+    selectedItem,
+  });
 
   // move/copy state
   const [moveCopyTargetFolderId, setMoveCopyTargetFolderId] = useState<
@@ -265,100 +118,9 @@ export default function DocumentManagerPage() {
   );
   const [moveCopyOpen, setMoveCopyOpen] = useState(false);
 
-  // ---------- debounced search ----------
-  useEffect(() => {
-    const handle = setTimeout(() => {
-      setDebouncedSearch(searchQuery.trim());
-    }, 250);
-    return () => clearTimeout(handle);
-  }, [searchQuery]);
-
   // ---------- data loading helpers ----------
 
-  const loadDepartmentContents = async (dept: Department) => {
-    localStorage.setItem("fildas.currentDepartmentId", String(dept.id));
-    localStorage.removeItem("fildas.currentFolderId");
 
-    setLoading(true);
-    setError(null);
-    setCurrentDepartment(dept);
-    setCurrentFolder(null);
-    setSelectedItem(null); // do NOT treat the dept as selected for actions
-
-    try {
-      const [folderRes, docRes] = await Promise.all([
-        api.get("/folders", {
-          params: { department_id: dept.id, parent_id: null },
-        }),
-        api.get("/documents", {
-          params: { department_id: dept.id, folder_id: null },
-        }),
-      ]);
-      const fs: FolderRow[] = folderRes.data.data ?? folderRes.data;
-      const docs: DocumentRow[] = docRes.data.data ?? docRes.data;
-
-      setFolders((prev) => [
-        ...prev.filter((f) => f.department_id !== dept.id),
-        ...fs,
-      ]);
-      setDocuments((prev) => [
-        ...prev.filter(
-          (d) => d.department_id !== dept.id || d.folder_id !== null
-        ),
-        ...docs,
-      ]);
-    } catch (e) {
-      console.error(e);
-      setError("Failed to load department contents.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadFolderContents = async (folder: FolderRow) => {
-    localStorage.setItem(
-      "fildas.currentDepartmentId",
-      String(folder.department_id)
-    );
-    localStorage.setItem("fildas.currentFolderId", String(folder.id));
-
-    setLoading(true);
-    setError(null);
-    setCurrentFolder(folder);
-    setSelectedItem(null); // do NOT treat the folder as selected for actions
-
-    try {
-      const [folderRes, docRes] = await Promise.all([
-        api.get("/folders", {
-          params: { department_id: folder.department_id, parent_id: folder.id },
-        }),
-        api.get("/documents", {
-          params: { department_id: folder.department_id, folder_id: folder.id },
-        }),
-      ]);
-      const childFolders: FolderRow[] = folderRes.data.data ?? folderRes.data;
-      const docs: DocumentRow[] = docRes.data.data ?? docRes.data;
-
-      setFolders((prev) => {
-        const existingIds = new Set(prev.map((f) => f.id));
-        const merged = [...prev];
-        childFolders.forEach((f) => {
-          if (!existingIds.has(f.id)) merged.push(f);
-        });
-        return merged;
-      });
-
-      setDocuments((prev) => {
-        const others = prev.filter((d) => d.folder_id !== folder.id);
-        return [...others, ...docs];
-      });
-    } catch (e) {
-      console.error(e);
-      setError("Failed to load folder.");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleDetailsResizeStart = () => {
     const startX =
@@ -380,169 +142,9 @@ export default function DocumentManagerPage() {
     window.addEventListener("mouseup", onUp);
   };
 
-  // ---------- INITIAL LOAD ----------
-  useEffect(() => {
-    const loadInitial = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const deptRes = await api.get("/departments");
-        const deptItems: Department[] = deptRes.data.data ?? deptRes.data;
-        setDepartments(deptItems);
 
-        const storedSharedTarget = localStorage.getItem("fildas.sharedTarget");
-        if (storedSharedTarget) {
-          try {
-            const target = JSON.parse(storedSharedTarget) as {
-              type: "folder";
-              folder_id: number;
-              department_id: number | null;
-            };
-            if (target.type === "folder" && target.department_id) {
-              const dept =
-                deptItems.find((d) => d.id === target.department_id) || null;
-              if (dept) {
-                localStorage.removeItem("fildas.sharedTarget");
-                await loadDepartmentContents(dept);
 
-                try {
-                  const folderRes = await api.get<FolderRow>(
-                    `/folders/${target.folder_id}`
-                  );
-                  const folder = folderRes.data;
-                  if (folder.department_id === dept.id) {
-                    await loadFolderContents(folder);
-                    return;
-                  }
-                } catch (e) {
-                  console.error(
-                    "Failed to load shared folder, fallback to dept root",
-                    e
-                  );
-                }
-              }
-            }
-          } catch (e) {
-            console.error("Invalid fildas.sharedTarget", e);
-            localStorage.removeItem("fildas.sharedTarget");
-          }
-        }
 
-        const storedDeptId = localStorage.getItem("fildas.currentDepartmentId");
-        const storedFolderId = localStorage.getItem("fildas.currentFolderId");
-
-        // Staff & Admin: force to their own department
-        if (!isSuperAdmin) {
-          const userDeptId = user.department_id;
-          if (!userDeptId) {
-            setCurrentDepartment(null);
-            setCurrentFolder(null);
-            setSelectedItem(null);
-            return;
-          }
-
-          const dept = deptItems.find((d) => d.id === userDeptId) || null;
-          if (!dept) {
-            setCurrentDepartment(null);
-            setCurrentFolder(null);
-            setSelectedItem(null);
-            return;
-          }
-
-          await loadDepartmentContents(dept);
-          return;
-        }
-
-        // Super Admin: restore previous context
-        if (!storedDeptId) {
-          setCurrentDepartment(null);
-          setCurrentFolder(null);
-          setSelectedItem(null);
-          return;
-        }
-
-        const deptId = Number(storedDeptId);
-        const dept = deptItems.find((d) => d.id === deptId);
-        if (!dept) {
-          localStorage.removeItem("fildas.currentDepartmentId");
-          localStorage.removeItem("fildas.currentFolderId");
-          setCurrentDepartment(null);
-          setCurrentFolder(null);
-          setSelectedItem(null);
-          return;
-        }
-
-        if (!storedFolderId) {
-          await loadDepartmentContents(dept);
-          return;
-        }
-
-        const folderId = Number(storedFolderId);
-        try {
-          const folderRes = await api.get<FolderRow>(`/folders/${folderId}`);
-          const folder = folderRes.data;
-          if (folder.department_id !== dept.id) {
-            await loadDepartmentContents(dept);
-            return;
-          }
-          await loadDepartmentContents(dept);
-          await loadFolderContents(folder);
-        } catch (e) {
-          console.error(
-            "Failed to restore folder, falling back to dept root",
-            e
-          );
-          localStorage.removeItem("fildas.currentFolderId");
-          await loadDepartmentContents(dept);
-        }
-      } catch (e) {
-        console.error(e);
-        setError("Failed to load departments.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadInitial();
-  }, [isSuperAdmin, user.department_id]);
-
-  // ---------- navigation / actions ----------
-
-  const handleGoBack = () => {
-    if (currentFolder) {
-      const parent =
-        currentFolder.parent_id != null
-          ? folders.find((f) => f.id === currentFolder.parent_id) || null
-          : null;
-      if (parent) {
-        setCurrentFolder(parent);
-        setSelectedItem(null);
-        setSearchQuery(""); // clear search on navigation
-        setDebouncedSearch(""); // clear debounced search
-        localStorage.setItem("fildas.currentFolderId", String(parent.id));
-        loadFolderContents(parent);
-      } else {
-        setCurrentFolder(null);
-        setSelectedItem(null);
-        setSearchQuery(""); // clear search on navigation
-        setDebouncedSearch(""); // clear debounced search
-        localStorage.removeItem("fildas.currentFolderId");
-        if (currentDepartment) {
-          loadDepartmentContents(currentDepartment);
-        }
-      }
-    } else if (currentDepartment) {
-      // From department root back to Departments list: Super Admin only
-      if (!isSuperAdmin) return;
-      setCurrentDepartment(null);
-      setCurrentFolder(null);
-      setSelectedItem(null);
-      setSearchQuery(""); // clear search on navigation
-      setDebouncedSearch(""); // clear debounced search
-      localStorage.removeItem("fildas.currentDepartmentId");
-      localStorage.removeItem("fildas.currentFolderId");
-    }
-  };
 
   const handleDownload = async (item: Item) => {
     if (item.kind !== "file") return;
@@ -706,20 +308,6 @@ export default function DocumentManagerPage() {
     isSuperAdmin,
   });
 
-  const folderAncestors: FolderRow[] = (() => {
-    if (!currentFolder) return [];
-    const chain: FolderRow[] = [];
-    let cursor: FolderRow | null = currentFolder;
-    while (cursor) {
-      chain.unshift(cursor);
-      cursor =
-        cursor.parent_id != null
-          ? folders.find((f) => f.id === cursor!.parent_id) || null
-          : null;
-    }
-    return chain;
-  })();
-
   const isSelected = (item: Item) => {
     if (!selectedItem) return false;
     if (item.kind !== selectedItem.kind) return false;
@@ -736,14 +324,12 @@ export default function DocumentManagerPage() {
       setDepartments((prev) => prev.map((d) => (d.id === dept.id ? dept : d)));
       setSelectedItem(null);
       setSearchQuery(""); // clear search
-      setDebouncedSearch(""); // clear debounced search
       loadDepartmentContents(dept);
     } else if (item.kind === "folder") {
       const folder = { ...(item.data as FolderRow), last_opened_at: now };
       setFolders((prev) => prev.map((f) => (f.id === folder.id ? folder : f)));
       setSelectedItem(null);
       setSearchQuery(""); // clear search
-      setDebouncedSearch(""); // clear debounced search
       loadFolderContents(folder);
     } else {
       const doc = { ...(item.data as DocumentRow), last_opened_at: now };
@@ -752,65 +338,6 @@ export default function DocumentManagerPage() {
       setDetailsOpen(true);
     }
   };
-
-  const formatSize = (bytes: number) => {
-    if (!bytes) return "0 B";
-    const units = ["B", "KB", "MB", "GB"];
-    let i = 0;
-    let value = bytes;
-    while (value >= 1024 && i < units.length - 1) {
-      value /= 1024;
-      i++;
-    }
-    return `${value.toFixed(1)} ${units[i]}`;
-  };
-
-  const getPreviewUrlFromApi = async (docId: number) => {
-    const res = await api.get<DocumentPreview>(`/documents/${docId}/preview`);
-    return res.data.stream_url;
-  };
-
-  useEffect(() => {
-    const loadPreview = async () => {
-      if (!detailsOpen || !selectedItem || selectedItem.kind !== "file") {
-        setPreviewUrl(null);
-        setPreviewLoading(false);
-        return;
-      }
-
-      const doc = selectedItem.data as DocumentRow;
-      const mime = doc.mime_type || "";
-
-      if (
-        !mime.startsWith("image/") &&
-        mime !== "application/pdf" &&
-        mime !==
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document" &&
-        mime !== "application/msword" &&
-        mime !==
-          "application/vnd.openxmlformats-officedocument.presentationml.presentation" &&
-        mime !== "application/vnd.ms-powerpoint"
-      ) {
-        setPreviewUrl(null);
-        setPreviewLoading(false); // <-- FIX 1: ADD THIS
-        return;
-      }
-
-      setPreviewLoading(true); // <-- FIX 2: ADD THIS
-
-      try {
-        const url = await getPreviewUrlFromApi(doc.id);
-        setPreviewUrl(url);
-      } catch (e) {
-        console.error("Failed to load preview URL", e);
-        setPreviewUrl(null);
-      } finally {
-        setPreviewLoading(false); // <-- FIX 3: ADD THIS
-      }
-    };
-
-    loadPreview();
-  }, [detailsOpen, selectedItem]);
 
   const handleCreateFolder = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1099,7 +626,6 @@ export default function DocumentManagerPage() {
               setCurrentFolder(null);
               setSelectedItem(null);
               setSearchQuery(""); // clear search when going to departments root
-              setDebouncedSearch("");
             }}
           >
             Departments
@@ -1114,7 +640,6 @@ export default function DocumentManagerPage() {
                   setCurrentFolder(null);
                   setSelectedItem(null); // do not treat dept as selected
                   setSearchQuery(""); // clear search when going to dept root
-                  setDebouncedSearch("");
                 }}
               >
                 {currentDepartment.name}
@@ -1132,7 +657,6 @@ export default function DocumentManagerPage() {
                     setCurrentFolder(folder);
                     setSelectedItem(null); // navigation, not selection
                     setSearchQuery(""); // clear search when jumping via breadcrumb
-                    setDebouncedSearch("");
                   }}
                 >
                   {folder.name}
@@ -1286,5 +810,5 @@ export default function DocumentManagerPage() {
         onConfirm={handleMoveCopyConfirm}
       />
     </>
-  );  
+  );
 }

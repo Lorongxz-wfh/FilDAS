@@ -22,6 +22,18 @@ import type {
   FolderRow as DeptFolderRow,
 } from "../types/documents";
 
+
+// New Imports are here after refactoring
+import { formatSize } from "../features/documents/lib/formatSize";
+import { useSharedFiles } from "../features/documents/hooks/useSharedFiles";
+import type {
+  DocumentRow,
+  SharedFolder,
+} from "../features/documents/hooks/useSharedFiles";
+
+
+
+
 type LayoutContext = {
   user: {
     id: number;
@@ -35,24 +47,6 @@ type LayoutContext = {
 type SortMode = "alpha" | "recent" | "ownerDept";
 type ViewMode = "grid" | "list";
 
-type DocumentRow = BaseDocumentRow & {
-  folder_name?: string | null;
-  department_name?: string | null;
-  owner_name?: string | null;
-  share_permission?: "viewer" | "editor" | string;
-};
-
-type SharedFolder = {
-  id: number;
-  name: string;
-  parent_id: number | null;
-  department_id: number | null;
-  department_name?: string | null;
-  owner_id: number;
-  owner_name?: string | null;
-  permission: "viewer" | "editor";
-};
-
 export default function SharedFilesPage() {
   // ---------- context / hooks ----------
 
@@ -62,354 +56,78 @@ export default function SharedFilesPage() {
     user.department_id ?? null
   );
 
-  // ---------- navigation state (breadcrumbs, current context) ----------
-
-  const [folderPath, setFolderPath] = useState<SharedFolder[]>([]);
-  const currentFolder =
-    folderPath.length > 0 ? folderPath[folderPath.length - 1] : null;
-
-  // ---------- raw data from API (non‑search) ----------
-
-  const [folders, setFolders] = useState<SharedFolder[]>([]);
-  const [documents, setDocuments] = useState<DocumentRow[]>([]);
-
-  const [folderChildren, setFolderChildren] = useState<SharedFolder[]>([]);
-  console.log(
-    "PAGE folderChildren:",
-    folderChildren.map((f) => ({
-      id: f.id,
-      name: f.name,
-      parent_id: f.parent_id,
-      permission: f.permission,
-    }))
-  );
-
-  const [folderDocs, setFolderDocs] = useState<DocumentRow[]>([]);
-  const [allSharedDocs, setAllSharedDocs] = useState<DocumentRow[]>([]);
-
-  // ---------- search state (input, debounce, results) ----------
-
-  const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-
-  // ---------- UI state (loading, errors, view/sort) ----------
-
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const [viewMode, setViewMode] = useState<ViewMode>("grid");
-  const [sortMode, setSortMode] = useState<SortMode>("recent");
-
-  // ---------- selection / details / preview state ----------
-
-  const [selectedItem, setSelectedItem] = useState<Item | null>(null);
-  const [detailsOpen, setDetailsOpen] = useState(false);
-
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
-
-  const [detailsWidth, setDetailsWidth] = useState(320); // px
-
-  // ---------- modals state ----------
-
-  const [sharedUploadOpen, setSharedUploadOpen] = useState(false);
-  const [sharedUploadMode, setSharedUploadMode] = useState<"files" | "folder">(
-    "files"
-  );
-
-  const [sharedNewFolderOpen, setSharedNewFolderOpen] = useState(false);
-  const [sharedCreatingFolder, setSharedCreatingFolder] = useState(false);
-  const [sharedNewFolderName, setSharedNewFolderName] = useState("");
-  const [sharedFolderError, setSharedFolderError] = useState<string | null>(
-    null
-  );
-
-  const [sharedRenameOpen, setSharedRenameOpen] = useState(false);
-  const [sharedRenameName, setSharedRenameName] = useState("");
-  const [sharedRenaming, setSharedRenaming] = useState(false);
-  const [sharedRenameError, setSharedRenameError] = useState<string | null>(
-    null
-  );
-
-  const [sharedMoveCopyOpen, setSharedMoveCopyOpen] = useState(false);
-  const [sharedPendingAction, setSharedPendingAction] = useState<
-    "move" | "copy" | null
-  >(null);
-
-  const [sharedMoveCopyTargetFolderId, setSharedMoveCopyTargetFolderId] =
-    useState<number | null>(null);
-
-  // ---------- data loading helpers ----------
-
-  const loadTopLevelShared = async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const [docsRes, foldersRes] = await Promise.all([
-        api.get("/documents/shared"),
-        api.get("/folders/shared"),
-      ]);
-
-      const foldersRaw = (foldersRes.data ?? []) as any[];
-      const docsData = (docsRes.data ?? []) as any[];
-
-      const foldersData: SharedFolder[] = foldersRaw.map((f) => ({
-        id: f.id,
-        name: f.name,
-        parent_id: f.parentid ?? null,
-        department_id: f.departmentid ?? null,
-        department_name: f.departmentname ?? null,
-        owner_id: f.ownerid ?? null,
-        owner_name: f.ownername ?? null,
-        permission: f.permission,
-      }));
-
-      const mappedAllDocs: DocumentRow[] = docsData.map((d) => ({
-        id: d.id,
-        title: d.title,
-        original_filename: d.originalfilename,
-        mime_type: d.mimetype,
-        size_bytes: d.sizebytes,
-        uploaded_at: d.uploadedat,
-        last_opened_at: d.lastopenedat ?? null,
-        folder_id: d.folderid ?? null,
-        department_id: d.departmentid,
-        folder_name: d.foldername ?? null,
-        department_name: d.departmentname ?? null,
-        owner_id: d.ownerid ?? null,
-        owner_name: d.ownername ?? null,
-        share_permission: d.sharepermission,
-      }));
-
-      setAllSharedDocs(mappedAllDocs);
-      setDocuments(mappedAllDocs.filter((d) => !d.folder_id));
-      setFolders(foldersData);
-      setFolderChildren([]);
-      setFolderDocs([]);
-      setFolderPath([]);
-      setSelectedItem(null);
-      setPreviewUrl(null);
-    } catch (e) {
-      console.error(e);
-      setError("Failed to load shared files.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadSharedFolderContents = async (folder: SharedFolder) => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const [subFoldersRes, docsRes] = await Promise.all([
-        api.get("/folders/shared", {
-          params: { parent_id: folder.id },
-        }),
-        api.get("/documents/shared", {
-          params: { folder_id: folder.id },
-        }),
-      ]);
-
-      const subFoldersRaw = (subFoldersRes.data?.data ??
-        subFoldersRes.data ??
-        []) as any[];
-
-      console.log("API subFoldersRaw for", folder.name, subFoldersRaw);
-
-      const docsData = (docsRes.data?.data ?? docsRes.data ?? []) as any[];
-
-      const subFolders: SharedFolder[] = subFoldersRaw.map((f) => ({
-        id: f.id,
-        name: f.name,
-        parent_id: f.parentid ?? null,
-        department_id: f.departmentid ?? null,
-        department_name: f.departmentname ?? null,
-        owner_id: f.ownerid ?? null,
-        owner_name: f.ownername ?? null,
-        permission: f.permission,
-      }));
-
-      const docs: DocumentRow[] = docsData.map((d) => ({
-        id: d.id,
-        title: d.title,
-        original_filename: d.originalfilename,
-        mime_type: d.mimetype,
-        size_bytes: d.sizebytes,
-        uploaded_at: d.uploadedat,
-        last_opened_at: d.lastopenedat ?? null,
-        folder_id: d.folderid ?? null,
-        department_id: d.departmentid,
-        folder_name: d.foldername ?? null,
-        department_name: d.departmentname ?? null,
-        owner_id: d.ownerid ?? null,
-        owner_name: d.ownername ?? null,
-        share_permission: d.sharepermission,
-      }));
-
-      setFolderChildren(subFolders);
-      setFolderDocs(docs);
-    } catch (e) {
-      console.error(e);
-      setError("Failed to load folder contents.");
-      setFolderChildren([]);
-      setFolderDocs([]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ---------- effects ----------
-
-  useEffect(() => {
-    loadTopLevelShared();
-  }, []);
-
-  // debounce search
-  useEffect(() => {
-    const handle = setTimeout(() => {
-      setDebouncedSearch(searchQuery.trim());
-    }, 300);
-    return () => clearTimeout(handle);
-  }, [searchQuery]);
-
-  // preview (using /documents/{id}/preview)
-  useEffect(() => {
-    const loadPreview = async () => {
-      if (!detailsOpen || !selectedItem || selectedItem.kind !== "file") {
-        setPreviewUrl(null);
-        setPreviewLoading(false);
-        return;
-      }
-
-      const doc = selectedItem.data as DocumentRow;
-      const mime = doc.mime_type;
-      if (
-        !mime.startsWith("image/") &&
-        mime !== "application/pdf" &&
-        !mime.includes("word") &&
-        !mime.includes("presentation")
-      ) {
-        setPreviewUrl(null);
-        setPreviewLoading(false);
-        return;
-      }
-
-      setPreviewLoading(true);
-      try {
-        const res = await api.get(`/documents/${doc.id}/preview`);
-        setPreviewUrl(res.data.streamurl ?? null);
-      } catch (e) {
-        console.error("Failed to load preview URL", e);
-        setPreviewUrl(null);
-      } finally {
-        setPreviewLoading(false);
-      }
-    };
-
-    loadPreview();
-  }, [detailsOpen, selectedItem]);
-
-  // ---------- derived data ----------
-
-  const visibleFolders = useMemo(() => {
-    const q = debouncedSearch.toLowerCase();
-    let source: SharedFolder[];
-
-    if (!currentFolder) {
-      source = q
-        ? folders.filter((f) => f.name.toLowerCase().includes(q))
-        : folders.filter((f) => f.parent_id === null);
-    } else {
-      source = q
-        ? folderChildren.filter((f) => f.name.toLowerCase().includes(q))
-        : folderChildren;
-    }
-
-    const list = [...source];
-    list.sort((a, b) =>
-      a.name.toLowerCase().localeCompare(b.name.toLowerCase())
-    );
-    return list;
-  }, [folders, folderChildren, currentFolder, debouncedSearch]);
-
-  const filteredSortedDocs = useMemo(() => {
-    const q = debouncedSearch.toLowerCase();
-    const hasSearch = q.length > 0;
-
-    let source: DocumentRow[];
-    if (!currentFolder) {
-      source = hasSearch ? allSharedDocs : documents;
-    } else {
-      source = folderDocs;
-    }
-
-    let list = [...source];
-
-    if (hasSearch) {
-      list = list.filter((d) => {
-        const name = (d.title || d.original_filename || "").toLowerCase();
-        const dept = (d.department_name || "").toLowerCase();
-        const owner = (d.owner_name || "").toLowerCase();
-        const folder = (d.folder_name || "").toLowerCase();
-        return (
-          name.includes(q) ||
-          dept.includes(q) ||
-          owner.includes(q) ||
-          folder.includes(q)
-        );
-      });
-    }
-
-    list.sort((a, b) => {
-      if (sortMode === "alpha") {
-        const na = (a.title || a.original_filename || "").toLowerCase();
-        const nb = (b.title || b.original_filename || "").toLowerCase();
-        return na.localeCompare(nb);
-      }
-
-      if (sortMode === "ownerDept") {
-        const da = (a.department_name || "").toLowerCase();
-        const db = (b.department_name || "").toLowerCase();
-        if (da !== db) return da.localeCompare(db);
-        const oa = (a.owner_name || "").toLowerCase();
-        const ob = (b.owner_name || "").toLowerCase();
-        if (oa !== ob) return oa.localeCompare(ob);
-        const na = (a.title || a.original_filename || "").toLowerCase();
-        const nb = (b.title || b.original_filename || "").toLowerCase();
-        return na.localeCompare(nb);
-      }
-
-      // recent
-      const ta = new Date(a.uploaded_at).getTime();
-      const tb = new Date(b.uploaded_at).getTime();
-      return tb - ta;
-    });
-
-    return list;
-  }, [
-    allSharedDocs,
-    documents,
-    folderDocs,
+  const {
+    folderPath,
+    setFolderPath,
     currentFolder,
+    folders,
+    setFolders,
+    documents,
+    setDocuments,
+    folderChildren,
+    setFolderChildren,
+    folderDocs,
+    setFolderDocs,
+    allSharedDocs,
+    setAllSharedDocs,
+    searchQuery,
+    setSearchQuery,
     debouncedSearch,
+    loading,
+    setLoading,
+    error,
+    setError,
+    viewMode,
+    setViewMode,
     sortMode,
-  ]);
+    setSortMode,
+    selectedItem,
+    setSelectedItem,
+    detailsOpen,
+    setDetailsOpen,
+    previewUrl,
+    setPreviewUrl,
+    previewLoading,
+    setPreviewLoading,
+    detailsWidth,
+    setDetailsWidth,
+    sharedUploadOpen,
+    setSharedUploadOpen,
+    sharedUploadMode,
+    setSharedUploadMode,
+    sharedNewFolderOpen,
+    setSharedNewFolderOpen,
+    sharedCreatingFolder,
+    setSharedCreatingFolder,
+    sharedNewFolderName,
+    setSharedNewFolderName,
+    sharedFolderError,
+    setSharedFolderError,
+    sharedRenameOpen,
+    setSharedRenameOpen,
+    sharedRenameName,
+    setSharedRenameName,
+    sharedRenaming,
+    setSharedRenaming,
+    sharedRenameError,
+    setSharedRenameError,
+    sharedMoveCopyOpen,
+    setSharedMoveCopyOpen,
+    sharedPendingAction,
+    setSharedPendingAction,
+    sharedMoveCopyTargetFolderId,
+    setSharedMoveCopyTargetFolderId,
+    loadTopLevelShared,
+    loadSharedFolderContents,
+    visibleFolders,
+    filteredSortedDocs,
+  } = useSharedFiles({
+    userId: user.id,
+    isAdmin,
+  });
+
 
   // ---------- helpers ----------
-
-  const formatSize = (bytes: number) => {
-    if (!bytes) return "0 B";
-    const units = ["B", "KB", "MB", "GB"];
-    let i = 0;
-    let v = bytes;
-    while (v >= 1024 && i < units.length - 1) {
-      v /= 1024;
-      i++;
-    }
-    return `${v.toFixed(1)} ${units[i]}`;
-  };
 
   const isSelected = (kind: Item["kind"], id: number) => {
     if (!selectedItem) return false;

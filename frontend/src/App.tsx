@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import AppLayout from "./layouts/AppLayout";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
-import DocumentManagerPage from "./pages/DocumentManagerPage";
+import DocumentManagerPage from "./features/documents/pages/DocumentManagerPage";
 import SharedFilesPage from "./pages/SharedFilesPage";
 import UserManagerPage from "./pages/UserManagerPage";
 // import ReportsPage from "./pages/ReportsPage";
