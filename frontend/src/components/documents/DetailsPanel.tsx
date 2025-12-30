@@ -5,7 +5,6 @@ import Modal from "../Modal";
 import { api } from "../../lib/api";
 import type { Item, DocumentRow, FolderRow } from "../../types/documents";
 
-
 type Props = {
   open: boolean;
   selectedItem: Item | null;
@@ -23,7 +22,7 @@ type ShareRecord = {
   id: number;
   owner_id: number;
   target_user_id: number;
-  permission: "viewer" | "editor" | string;
+  permission: "viewer" | "contributor" | "editor" | string;
   document_id: number | null;
   folder_id: number | null;
   owner?: { id: number; name: string };
@@ -608,31 +607,30 @@ function ActivityPlaceholder({ selectedItem }: { selectedItem: Item }) {
       return;
     }
 
-const fetchActivities = async () => {
-  setLoading(true);
-  setError(null);
+    const fetchActivities = async () => {
+      setLoading(true);
+      setError(null);
 
-  const type = selectedItem.kind === "file" ? "documents" : "folders";
-  const id = (selectedItem.data as any).id;
+      const type = selectedItem.kind === "file" ? "documents" : "folders";
+      const id = (selectedItem.data as any).id;
 
-  try {
-    const res = await api.get(`/${type}/${id}/activity`);
+      try {
+        const res = await api.get(`/${type}/${id}/activity`);
 
-    // BEFORE:
-    // const data = res.data.data ?? res.data;
+        // BEFORE:
+        // const data = res.data.data ?? res.data;
 
-    // AFTER: controller already returns a raw array
-    const data = res.data as any[];
+        // AFTER: controller already returns a raw array
+        const data = res.data as any[];
 
-    setActivities(data);
-  } catch (e) {
-    console.error(e);
-    setError("Failed to load activity");
-  } finally {
-    setLoading(false);
-  }
-};
-
+        setActivities(data);
+      } catch (e) {
+        console.error(e);
+        setError("Failed to load activity");
+      } finally {
+        setLoading(false);
+      }
+    };
 
     fetchActivities();
   }, [selectedItem]);
@@ -728,7 +726,14 @@ function PeopleWithAccess({
             const label = target
               ? `${target.name} (${target.email})`
               : `User #${s.target_user_id}`;
-            const permLabel = s.permission === "editor" ? "Editor" : "Viewer";
+            const rawPerm = (s.permission || "").toString().toLowerCase();
+            const permLabel =
+              rawPerm === "editor"
+                ? "Editor"
+                : rawPerm === "contributor"
+                ? "Contributor"
+                : "Viewer";
+
             return (
               <li key={s.id} className="flex flex-col">
                 <span className="text-xs text-slate-200">{label}</span>
@@ -760,7 +765,9 @@ function ShareModal({
   onAccessChanged,
 }: ShareModalProps) {
   const [email, setEmail] = useState("");
-  const [permission, setPermission] = useState<"viewer" | "editor">("viewer");
+  const [permission, setPermission] = useState<
+    "viewer" | "contributor" | "editor"
+  >("viewer");
   const [loading, setLoading] = useState(false);
   const [shares, setShares] = useState<ShareRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -843,6 +850,31 @@ function ShareModal({
     }
   };
 
+  const handleUpdatePermission = async (
+    shareId: number,
+    newPermission: "viewer" | "contributor" | "editor"
+  ) => {
+    if (!canEditAccess) return;
+    setError(null);
+
+    try {
+      const res = await api.patch(`/shares/${shareId}`, {
+        permission: newPermission,
+      });
+      const updated: ShareRecord = res.data;
+
+      setShares((prev) => prev.map((s) => (s.id === shareId ? updated : s)));
+      if (onAccessChanged) await onAccessChanged();
+    } catch (e: any) {
+      console.error(e);
+      const msg =
+        e?.response?.data?.error ||
+        e?.response?.data?.message ||
+        "Failed to update permission.";
+      setError(msg);
+    }
+  };
+
   const itemName =
     item.kind === "file"
       ? (item.data as DocumentRow).title ||
@@ -871,14 +903,18 @@ function ShareModal({
               <label className="block text-[11px] font-semibold uppercase text-slate-400">
                 Permission
               </label>
+
               <select
                 className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200"
                 value={permission}
                 onChange={(e) =>
-                  setPermission(e.target.value as "viewer" | "editor")
+                  setPermission(
+                    e.target.value as "viewer" | "contributor" | "editor"
+                  )
                 }
               >
                 <option value="viewer">Viewer</option>
+                <option value="contributor">Contributor</option>
                 <option value="editor">Editor</option>
               </select>
             </div>
@@ -906,6 +942,7 @@ function ShareModal({
         <p className="mb-2 text-[11px] font-semibold uppercase text-slate-400">
           People with access
         </p>
+
         {shares.length === 0 ? (
           <p className="text-xs text-slate-500">No one else has access yet.</p>
         ) : (
@@ -915,17 +952,48 @@ function ShareModal({
               const label = target
                 ? `${target.name} (${target.email})`
                 : `User #${s.target_user_id}`;
-              const permLabel = s.permission === "editor" ? "Editor" : "Viewer";
+              const rawPerm = (s.permission || "").toString().toLowerCase();
+              const permValue =
+                rawPerm === "editor"
+                  ? "editor"
+                  : rawPerm === "contributor"
+                  ? "contributor"
+                  : "viewer";
+
               return (
                 <li
                   key={s.id}
                   className="flex items-center justify-between gap-2"
                 >
-                  <div className="flex flex-col">
+                  <div className="flex items-center gap-2">
                     <span className="text-xs text-slate-200">{label}</span>
-                    <span className="text-[11px] text-slate-500">
-                      {permLabel}
-                    </span>
+                    {canEditAccess ? (
+                      <select
+                        className="rounded-md border border-slate-800 bg-slate-900 px-1.5 py-0.5 text-[11px] text-slate-300 hover:border-slate-600"
+                        value={permValue}
+                        onChange={(e) =>
+                          handleUpdatePermission(
+                            s.id,
+                            e.target.value as
+                              | "viewer"
+                              | "contributor"
+                              | "editor"
+                          )
+                        }
+                      >
+                        <option value="viewer">Viewer</option>
+                        <option value="contributor">Contributor</option>
+                        <option value="editor">Editor</option>
+                      </select>
+                    ) : (
+                      <span className="text-[11px] text-slate-500">
+                        {permValue === "editor"
+                          ? "Editor"
+                          : permValue === "contributor"
+                          ? "Contributor"
+                          : "Viewer"}
+                      </span>
+                    )}
                   </div>
                   {canEditAccess && (
                     <button

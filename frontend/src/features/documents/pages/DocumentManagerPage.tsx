@@ -10,7 +10,7 @@ import { applySort, computeVisibleItems } from "../../../lib/documentsSorting";
 import { formatSize } from "../lib/formatSize";
 import { useResizableDetails } from "../hooks/useResizableDetails";
 import { useItemRenameDelete } from "../hooks/useItemRenameDelete";
-
+import { notify } from "../../../lib/notify";
 
 type LayoutContext = {
   user: {
@@ -83,31 +83,30 @@ export default function DocumentManagerPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [sortMode, setSortMode] = useState<SortMode>("alpha");
 
-    const {
-      selectedItem,
-      setSelectedItem,
-      detailsOpen,
-      setDetailsOpen,
-      renameOpen,
-      setRenameOpen,
-      renameName,
-      setRenameName,
-      renaming,
-      renameError,
-      setRenameError,
-      getItemName,
-      handleRenameSubmit,
-      handleDeleteSelected,
-    } = useItemRenameDelete({
-      currentDepartment,
-      currentFolder,
-      setCurrentDepartment,
-      setCurrentFolder,
-      setDepartments,
-      setFolders,
-      setDocuments,
-    });
-
+  const {
+    selectedItem,
+    setSelectedItem,
+    detailsOpen,
+    setDetailsOpen,
+    renameOpen,
+    setRenameOpen,
+    renameName,
+    setRenameName,
+    renaming,
+    renameError,
+    setRenameError,
+    getItemName,
+    handleRenameSubmit,
+    handleDeleteSelected,
+  } = useItemRenameDelete({
+    currentDepartment,
+    currentFolder,
+    setCurrentDepartment,
+    setCurrentFolder,
+    setDepartments,
+    setFolders,
+    setDocuments,
+  });
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
@@ -158,7 +157,7 @@ export default function DocumentManagerPage() {
       window.URL.revokeObjectURL(url);
     } catch (e) {
       console.error(e);
-      alert("Failed to download file.");
+      notify("Failed to download file.", "error");
     }
   };
 
@@ -181,7 +180,7 @@ export default function DocumentManagerPage() {
       window.URL.revokeObjectURL(url);
     } catch (e) {
       console.error(e);
-      alert("Failed to download folder.");
+      notify("Failed to download folder.", "error");
     }
   };
 
@@ -206,9 +205,11 @@ export default function DocumentManagerPage() {
       } else {
         await loadDepartmentContents(currentDepartment);
       }
+
+      notify("Moved successfully.", "success");
     } catch (e) {
       console.error(e);
-      alert("Failed to move item.");
+      notify("Failed to move item.", "error");
     }
   };
 
@@ -233,9 +234,11 @@ export default function DocumentManagerPage() {
       } else {
         await loadDepartmentContents(currentDepartment);
       }
+
+      notify("Copied successfully.", "success");
     } catch (e) {
       console.error(e);
-      alert("Failed to copy item.");
+      notify("Failed to copy item.", "error");
     }
   };
 
@@ -312,14 +315,15 @@ export default function DocumentManagerPage() {
       setFolders((prev) => [...prev, created]);
       setNewFolderName("");
       setNewFolderOpen(false);
+      notify("Folder created.", "success");
     } catch (err) {
       console.error(err);
       setFolderError("Failed to create folder.");
+      notify("Failed to create folder.", "error");
     } finally {
       setCreatingFolder(false);
     }
   };
-
 
   const toolbarLabel =
     selectedItem == null
@@ -659,6 +663,7 @@ export default function DocumentManagerPage() {
             await loadDepartmentContents(currentDepartment);
           }
           setUploadOpen(false);
+          notify("Upload completed.", "success");
         }}
       />
 

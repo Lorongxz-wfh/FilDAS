@@ -96,5 +96,6 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/shares', [ShareController::class, 'index']);
     Route::get('/items/{type}/{id}/shares', [ShareController::class, 'itemShares']);
     Route::post('/shares', [ShareController::class, 'store']);
+    Route::patch('/shares/{share}', [ShareController::class, 'update']);
     Route::delete('/shares/{share}', [ShareController::class, 'destroy']);
 });

@@ -23,7 +23,7 @@ class FolderController extends Controller
         if ($request->filled('department_id')) {
             $query->where('department_id', $request->department_id);
         }
-            
+
         if ($request->filled('parent_id')) {
             $query->where('parent_id', $request->parent_id);
         }
@@ -64,12 +64,14 @@ class FolderController extends Controller
         $user = $request->user();
 
         $folder = Folder::create([
-            'name'          => $data['name'],
-            'description'   => $data['description'] ?? null,
-            'department_id' => $data['department_id'] ?? $user->department_id,
-            'parent_id'     => $data['parent_id'] ?? null,
-            'owner_id'      => $user->id,
+            'name'              => $data['name'],
+            'description'       => $data['description'] ?? null,
+            'department_id'     => $data['department_id'] ?? $user->department_id,
+            'parent_id'         => $data['parent_id'] ?? null,
+            'owner_id'          => $user->id,
+            'original_owner_id' => $user->id,
         ]);
+
 
         // Log on the folder itself
         ActivityLogger::log($folder, 'created', 'Folder created via form');
@@ -103,6 +105,19 @@ class FolderController extends Controller
             'description' => 'nullable|string',
         ]);
 
+        $user = $request->user();
+
+        // Same model as move/copy: super admin, same dept owner, or shared editor
+        $isSuper  = $user->isAdmin() && $user->role?->name === 'super_admin';
+        $sameDept = $folder->department_id === $user->department_id;
+
+        $sharePerm      = $this->getFolderSharePermissionForUser($folder, $user);
+        $isSharedEditor = $sharePerm === 'editor';
+
+        if (!$isSuper && !$sameDept && !$isSharedEditor) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
         $folder->update($validated);
 
         ActivityLogger::log($folder, 'updated', 'Name or description changed');
@@ -113,10 +128,24 @@ class FolderController extends Controller
         ]);
     }
 
-    public function destroy(Folder $folder)
+
+    public function destroy(Request $request, Folder $folder)
     {
+        $user = $request->user();
+
+        $isSuper  = $user->isAdmin() && $user->role?->name === 'super_admin';
+        $sameDept = $folder->department_id === $user->department_id;
+        $sharePerm      = $this->getFolderSharePermissionForUser($folder, $user);
+        $isSharedEditor = $sharePerm === 'editor';
+
+        // Only super, same-dept owner, or shared editor can delete
+        if (!$isSuper && !$sameDept && !$isSharedEditor) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
         // log on the folder being deleted
         ActivityLogger::log($folder, 'deleted', 'Folder deleted');
+
 
         // also log on parent folder if any
         if ($folder->parent_id) {
@@ -241,6 +270,35 @@ class FolderController extends Controller
         }
     }
 
+    protected function getFolderSharePermissionForUser(Folder $folder, $user): ?string
+    {
+        // 1) Direct share on this folder
+        $direct = Share::where('target_user_id', $user->id)
+            ->where('folder_id', $folder->id)
+            ->value('permission');
+
+        if ($direct) {
+            return $direct;
+        }
+
+        // 2) Inherited from ancestor folders
+        $parentId = $folder->parent_id;
+        while ($parentId) {
+            $perm = Share::where('target_user_id', $user->id)
+                ->where('folder_id', $parentId)
+                ->value('permission');
+
+            if ($perm) {
+                return $perm;
+            }
+
+            $parent = Folder::find($parentId);
+            $parentId = $parent?->parent_id;
+        }
+
+        return null;
+    }
+
     public function move(Request $request, Folder $folder)
     {
         $user = $request->user();
@@ -253,7 +311,12 @@ class FolderController extends Controller
         $isSuper  = $user->isAdmin() && $user->role?->name === 'super_admin';
         $sameDept = $folder->department_id === $user->department_id;
 
-        if (!$isSuper && !$sameDept) {
+        // NEW: shared permission
+        $sharePerm      = $this->getFolderSharePermissionForUser($folder, $user);
+        $isSharedEditor = $sharePerm === 'editor';
+
+        // Must be super admin, owner in same dept, or shared editor
+        if (!$isSuper && !$sameDept && !$isSharedEditor) {
             return response()->json(['error' => 'Forbidden'], 403);
         }
 
@@ -267,6 +330,7 @@ class FolderController extends Controller
             $newDeptId = (int) $data['target_department_id'];
         }
 
+        // Non‑super cannot move a folder into another department
         if (!$isSuper && $newDeptId !== $folder->department_id) {
             return response()->json(['error' => 'Forbidden'], 403);
         }
@@ -307,27 +371,6 @@ class FolderController extends Controller
         ]);
     }
 
-    protected function cascadeFolderDepartment(Folder $root, int $newDeptId): void
-    {
-        $queue = [$root->id];
-
-        while (!empty($queue)) {
-            $children = Folder::whereIn('parent_id', $queue)->get();
-            if ($children->isEmpty()) {
-                break;
-            }
-
-            $childIds = $children->pluck('id')->all();
-
-            Folder::whereIn('id', $childIds)->update(['department_id' => $newDeptId]);
-            Document::whereIn('folder_id', $childIds)->update(['department_id' => $newDeptId]);
-
-            $queue = $childIds;
-        }
-
-        Document::where('folder_id', $root->id)->update(['department_id' => $newDeptId]);
-    }
-
     public function copy(Request $request, Folder $folder)
     {
         $user = $request->user();
@@ -335,6 +378,17 @@ class FolderController extends Controller
         $data = $request->validate([
             'target_folder_id' => 'nullable|exists:folders,id',
         ]);
+
+        $isSuper  = $user->isAdmin() && $user->role?->name === 'super_admin';
+        $sameDept = $folder->department_id === $user->department_id;
+
+        // NEW: shared permission
+        $sharePerm      = $this->getFolderSharePermissionForUser($folder, $user);
+        $isSharedEditor = $sharePerm === 'editor';
+
+        if (!$isSuper && !$sameDept && !$isSharedEditor) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
 
         $targetFolder = null;
         if (!empty($data['target_folder_id'])) {
@@ -345,13 +399,18 @@ class FolderController extends Controller
             ? $targetFolder->department_id
             : ($user->department_id ?? $folder->department_id);
 
+        // Viewer + Editor can copy TO their own department
+        if (!$isSuper && $deptId !== $user->department_id) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+
         $newRoot = null;
 
         DB::transaction(function () use ($folder, $targetFolder, $deptId, $user, &$newRoot) {
             $newRoot = $this->cloneFolderTree($folder, $targetFolder, $deptId, $user->id);
         });
 
-        // NEW: guard so analyser knows $newRoot is not null
         if (!$newRoot) {
             return response()->json(['error' => 'Failed to copy folder'], 500);
         }
@@ -381,7 +440,26 @@ class FolderController extends Controller
         ]);
     }
 
+    protected function cascadeFolderDepartment(Folder $root, int $newDeptId): void
+    {
+        $queue = [$root->id];
 
+        while (!empty($queue)) {
+            $children = Folder::whereIn('parent_id', $queue)->get();
+            if ($children->isEmpty()) {
+                break;
+            }
+
+            $childIds = $children->pluck('id')->all();
+
+            Folder::whereIn('id', $childIds)->update(['department_id' => $newDeptId]);
+            Document::whereIn('folder_id', $childIds)->update(['department_id' => $newDeptId]);
+
+            $queue = $childIds;
+        }
+
+        Document::where('folder_id', $root->id)->update(['department_id' => $newDeptId]);
+    }
 
     protected function cloneFolderTree(Folder $source, ?Folder $targetParent, int $deptId, int $newOwnerId): Folder
     {

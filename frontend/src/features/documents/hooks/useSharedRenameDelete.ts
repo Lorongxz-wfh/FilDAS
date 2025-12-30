@@ -6,6 +6,7 @@ import type {
   DocumentRow,
   SharedFolder,
 } from "./useSharedFiles";
+import { notify } from "../../../lib/notify";
 
 type Params = {
   setAllSharedDocs: React.Dispatch<React.SetStateAction<DocumentRow[]>>;
@@ -13,7 +14,13 @@ type Params = {
   setFolderDocs: React.Dispatch<React.SetStateAction<DocumentRow[]>>;
   setFolders: React.Dispatch<React.SetStateAction<SharedFolder[]>>;
   setFolderChildren: React.Dispatch<React.SetStateAction<SharedFolder[]>>;
+
+  // For auto‑reload on permission change (403)
+  currentFolder: SharedFolder | null;
+  loadTopLevelShared: () => Promise<void>;
+  loadSharedFolderContents: (folder: SharedFolder) => Promise<void>;
 };
+
 
 export function useSharedRenameDelete(params: Params) {
   const {
@@ -22,7 +29,11 @@ export function useSharedRenameDelete(params: Params) {
     setFolderDocs,
     setFolders,
     setFolderChildren,
+    currentFolder,
+    loadTopLevelShared,
+    loadSharedFolderContents,
   } = params;
+
 
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -85,16 +96,47 @@ export function useSharedRenameDelete(params: Params) {
         );
         setSelectedItem({ kind: "folder", data: updated as any });
       }
+    
+      notify("Renamed successfully.", "success");
+      setSharedRenameOpen(false);
+
 
       setSharedRenameOpen(false);
     } catch (err: any) {
       console.error(err);
-      setSharedRenameError(
-        err.response?.data?.message || "Failed to rename item."
-      );
+
+      const status = err?.response?.status;
+      const message =
+        err?.response?.data?.message || "Failed to rename item.";
+
+      if (status === 403) {
+        setSharedRenameError("You no longer have permission to rename this item.");
+        notify(
+          "Your access to this shared item changed. Reloading…",
+          "error"
+        );
+
+        // Deselect the stale item and close details.
+        setSelectedItem(null);
+        setDetailsOpen(false);
+
+        // Auto‑reload the shared view so buttons/permissions update.
+        if (currentFolder) {
+          await loadSharedFolderContents(currentFolder);
+        } else {
+          await loadTopLevelShared();
+        }
+      } else {
+
+        setSharedRenameError(message);
+        notify(message, "error");
+      }
     } finally {
       setSharedRenaming(false);
     }
+
+
+
   };
 
   const handleSharedDeleteSelected = async () => {
@@ -115,10 +157,39 @@ export function useSharedRenameDelete(params: Params) {
       }
       setSelectedItem(null);
       setDetailsOpen(false);
-    } catch (err) {
+      setSelectedItem(null);
+      setDetailsOpen(false);
+      notify("Item deleted.", "success");
+
+    } catch (err: any) {
       console.error(err);
-      alert("Failed to delete item.");
+
+      const status = err?.response?.status;
+      const message =
+        err?.response?.data?.message || "Failed to delete item.";
+
+      if (status === 403) {
+        notify(
+          "Your access to this shared item changed. Reloading…",
+          "error"
+        );
+
+        // Deselect the stale item and close details.
+        setSelectedItem(null);
+        setDetailsOpen(false);
+
+        if (currentFolder) {
+          await loadSharedFolderContents(currentFolder);
+        } else {
+          await loadTopLevelShared();
+        }
+      } else {
+
+        notify(message, "error");
+      }
     }
+
+
   };
 
   return {

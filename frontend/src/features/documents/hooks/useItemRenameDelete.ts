@@ -7,6 +7,8 @@ import type {
   FolderRow,
   Item,
 } from "../../../types/documents";
+import { notify } from "../../../lib/notify";
+
 
 type Params = {
   currentDepartment: Department | null;
@@ -97,13 +99,29 @@ export function useItemRenameDelete(params: Params) {
         }
       }
 
+      notify("Renamed successfully.", "success");
       setRenameOpen(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setRenameError("Failed to rename item.");
+
+      const status = err?.response?.status;
+      const message =
+        err?.response?.data?.message || "Failed to rename item.";
+
+      if (status === 403) {
+        setRenameError("You no longer have permission to rename this item.");
+        notify(
+          "Your access to this item changed. Please refresh the page or reopen the folder.",
+          "error"
+        );
+      } else {
+        setRenameError(message);
+        notify(message, "error");
+      }
     } finally {
       setRenaming(false);
     }
+
   };
 
   const handleDeleteSelected = async () => {
@@ -138,10 +156,25 @@ export function useItemRenameDelete(params: Params) {
 
       setSelectedItem(null);
       setDetailsOpen(false);
-    } catch (err) {
+      notify("Item deleted.", "success");
+    } catch (err: any) {
       console.error(err);
-      alert("Failed to delete item on server.");
+
+      const status = err?.response?.status;
+      const message =
+        err?.response?.data?.message || "Failed to delete item on server.";
+
+      if (status === 403) {
+        notify(
+          "Your access to this item changed. Please refresh the page or reopen the folder.",
+          "error"
+        );
+      } else {
+        notify(message, "error");
+      }
     }
+
+
   };
 
   return {

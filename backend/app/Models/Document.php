@@ -73,4 +73,10 @@ class Document extends Model
     {
         return $this->morphMany(Activity::class, 'subject');
     }
+
+    // in App\Models\Document
+    public function originalOwner()
+    {
+        return $this->belongsTo(User::class, 'original_owner_id');
+    }
 }

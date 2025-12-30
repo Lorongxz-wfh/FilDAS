@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 
+
 class DocumentController extends Controller
 {
     public function index(Request $request)
@@ -125,6 +126,8 @@ class DocumentController extends Controller
             $targetFolderId = $parentId;
         }
 
+        $uploaderId = auth()->id();
+
         $document = Document::create([
             'title'             => $validated['title'],
             'description'       => $validated['description'] ?? null,
@@ -135,10 +138,12 @@ class DocumentController extends Controller
             'original_filename' => $originalName,
             'size_bytes'        => $file->getSize(),
             'mime_type'         => $file->getMimeType(),
-            'uploaded_by'       => auth()->id(),
-            'owner_id'          => auth()->id(),
+            'uploaded_by'       => $uploaderId,
+            'owner_id'          => $uploaderId,
+            'original_owner_id' => $uploaderId,
             'uploaded_at'       => now(),
         ]);
+
 
         // Log on the document itself
         ActivityLogger::log($document, 'uploaded');
@@ -172,18 +177,54 @@ class DocumentController extends Controller
             'owner_id'    => 'sometimes|nullable|exists:users,id',
         ]);
 
+        $user = $request->user();
+
+        // Re-evaluate live permission on every update
+        $effectivePerm = $this->getEffectivePermissionForUser($document, $user);
+        $isOwner =
+            (int) $document->owner_id === (int) $user->id ||
+            (int) $document->uploaded_by === (int) $user->id;
+
+        // Viewers cannot modify anything
+        if ($effectivePerm === 'viewer') {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        // Contributors can only edit documents they own
+        if ($effectivePerm === 'contributor' && !$isOwner) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
         $document->update($validated);
 
-        // LOG ACTIVITY
         ActivityLogger::log($document, 'updated', 'Title or description changed');
 
         return response()->json($document->load(['folder', 'uploadedBy', 'owner']));
     }
 
-    public function destroy(Document $document)
+
+    public function destroy(Request $request, Document $document)
     {
+        $user = $request->user();
+
+        $effectivePerm = $this->getEffectivePermissionForUser($document, $user);
+        $isOwner =
+            (int) $document->owner_id === (int) $user->id ||
+            (int) $document->uploaded_by === (int) $user->id;
+
+        // Viewers cannot delete
+        if ($effectivePerm === 'viewer') {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        // Contributors can only delete their own documents
+        if ($effectivePerm === 'contributor' && !$isOwner) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
         // log on document itself
         ActivityLogger::log($document, 'deleted', 'Document deleted');
+
 
         // log on parent folder, if any
         if ($document->folder_id && ($parent = Folder::find($document->folder_id))) {
@@ -351,6 +392,57 @@ class DocumentController extends Controller
         return response()->json($stats);
     }
 
+    protected function getDocumentSharePermissionForUser(Document $document, $user): ?string
+    {
+        // 1) Direct document share
+        $direct = Share::where('target_user_id', $user->id)
+            ->where('document_id', $document->id)
+            ->value('permission');
+
+        if ($direct) {
+            return $direct; // 'viewer' or 'editor'
+        }
+
+        // 2) Inherited from ancestor folders
+        $folderId = $document->folder_id;
+        while ($folderId) {
+            $perm = Share::where('target_user_id', $user->id)
+                ->where('folder_id', $folderId)
+                ->value('permission');
+
+            if ($perm) {
+                return $perm;
+            }
+
+            $folder = Folder::find($folderId);
+            $folderId = $folder?->parent_id;
+        }
+
+        return null;
+    }
+
+    protected function getEffectivePermissionForUser(Document $document, $user): string
+    {
+        $sharePerm = $this->getDocumentSharePermissionForUser($document, $user);
+        if (in_array($sharePerm, ['viewer', 'contributor', 'editor'], true)) {
+            return $sharePerm;
+        }
+
+        $isSuper  = $user->isAdmin() && $user->role?->name === 'super_admin';
+        $sameDept = $document->department_id === $user->department_id;
+
+        if ($isSuper) {
+            return 'editor';
+        }
+
+        if ($sameDept) {
+            return 'contributor';
+        }
+
+        return 'viewer';
+    }
+
+
     public function move(Request $request, Document $document)
     {
         $user = $request->user();
@@ -363,23 +455,63 @@ class DocumentController extends Controller
         $isSuper  = $user->isAdmin() && $user->role?->name === 'super_admin';
         $sameDept = $document->department_id === $user->department_id;
 
-        if (!$isSuper && !$sameDept) {
+        $sharePerm            = $this->getDocumentSharePermissionForUser($document, $user);
+        $isSharedEditor       = $sharePerm === 'editor';
+        $isSharedContributor  = $sharePerm === 'contributor';
+        $isOwner              = (int) $document->owner_id === (int) $user->id
+            || (int) $document->uploaded_by === (int) $user->id;
+
+        Log::info('DOC MOVE DEBUG', [
+            'doc_id'              => $document->id,
+            'user_id'             => $user->id,
+            'is_super'            => $isSuper,
+            'same_dept'           => $sameDept,
+            'share_perm'          => $sharePerm,
+            'is_shared_edit'      => $isSharedEditor,
+            'is_shared_contrib'   => $isSharedContributor,
+            'is_owner'            => $isOwner,
+            'doc_dept'            => $document->department_id,
+            'user_dept'           => $user->department_id,
+        ]);
+
+        // Allow move if:
+        // - super admin, OR
+        // - same department, OR
+        // - shared editor, OR
+        // - shared contributor AND owner
+        if (
+            !$isSuper &&
+            !$sameDept &&
+            !$isSharedEditor &&
+            !($isSharedContributor && $isOwner)
+        ) {
             return response()->json(['error' => 'Forbidden'], 403);
         }
+
 
         $targetFolder = null;
         $newDeptId    = $document->department_id;
 
         if (!empty($data['target_folder_id'])) {
             $targetFolder = Folder::findOrFail($data['target_folder_id']);
-            $newDeptId    = $targetFolder->department_id;
+            // For non‑super users, document department is fixed.
+            $newDeptId = $targetFolder->department_id ?? $document->department_id;
         } elseif (!empty($data['target_department_id'])) {
             $newDeptId = (int) $data['target_department_id'];
         }
 
-        if (!$isSuper && $newDeptId !== $document->department_id) {
+
+        // Non‑super users who are NOT shared editors cannot change the document's department.
+        if (!$isSuper && !$isSharedEditor && $newDeptId !== $document->department_id) {
             return response()->json(['error' => 'Forbidden'], 403);
         }
+
+
+
+
+
+
+
 
         $document->folder_id = $targetFolder?->id;
         if ($isSuper) {
@@ -391,10 +523,7 @@ class DocumentController extends Controller
             ? "Moved to folder: {$targetFolder->name}"
             : "Moved to department root";
 
-        // log on document
         ActivityLogger::log($document, 'updated', $details);
-
-        // log on target folder, if any
         if ($targetFolder) {
             ActivityLogger::log(
                 $targetFolder,
@@ -417,6 +546,34 @@ class DocumentController extends Controller
             'target_folder_id' => 'nullable|exists:folders,id',
         ]);
 
+        $isSuper  = $user->isAdmin() && $user->role?->name === 'super_admin';
+        $sameDept = $document->department_id === $user->department_id;
+
+        $sharePerm            = $this->getDocumentSharePermissionForUser($document, $user);
+        $isSharedEditor       = $sharePerm === 'editor';
+        $isSharedContributor  = $sharePerm === 'contributor';
+        $isOwner              = (int) $document->owner_id === (int) $user->id
+            || (int) $document->uploaded_by === (int) $user->id;
+
+        // Allow copy if:
+        // - super admin, OR
+        // - same department, OR
+        // - shared editor, OR
+        // - shared contributor AND owner
+        // (viewer can still copy via their own dept context, not via shared edit rights)
+        if (
+            !$isSuper &&
+            !$sameDept &&
+            !$isSharedEditor &&
+            !($isSharedContributor && $isOwner)
+        ) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+
+
+
+
         $targetFolder = null;
         if (!empty($data['target_folder_id'])) {
             $targetFolder = Folder::findOrFail($data['target_folder_id']);
@@ -425,6 +582,12 @@ class DocumentController extends Controller
         $deptId = $targetFolder
             ? $targetFolder->department_id
             : ($user->department_id ?? $document->department_id);
+
+        // Viewer + Editor can copy TO their own department
+        if (!$isSuper && $deptId !== $user->department_id) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
 
         $copy = Document::create([
             'title'             => $document->title,

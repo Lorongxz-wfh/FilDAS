@@ -15,7 +15,7 @@ class UserSeeder extends Seeder
             'name'          => 'System Admin',
             'email'         => 'admin@example.com',
             'password'      => Hash::make('password'),
-            'role_id'       => 1, // Admin
+            'role_id'       => 1, // Super Admin
             'department_id' => 1, // Quality Assurance Office
             'status'        => 'active',
         ]);

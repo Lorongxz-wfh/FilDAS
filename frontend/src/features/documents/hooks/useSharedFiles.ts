@@ -38,12 +38,22 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
   const currentFolder =
     folderPath.length > 0 ? folderPath[folderPath.length - 1] : null;
 
-  // raw data
+
   const [folders, setFolders] = useState<SharedFolder[]>([]);
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
   const [folderChildren, setFolderChildren] = useState<SharedFolder[]>([]);
   const [folderDocs, setFolderDocs] = useState<DocumentRow[]>([]);
   const [allSharedDocs, setAllSharedDocs] = useState<DocumentRow[]>([]);
+
+  // Folder search results (root or under current folder)
+  const [searchedFolders, setSearchedFolders] = useState<SharedFolder[] | null>(
+    null
+  );
+
+  // Document search results (root or under current folder)
+  const [searchedDocs, setSearchedDocs] = useState<DocumentRow[] | null>(null);
+
+
 
   // search
   const [searchQuery, setSearchQuery] = useState("");
@@ -210,6 +220,87 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
     }
   };
 
+    const searchSharedFolders = async (query: string) => {
+    const q = query.trim();
+    if (!q) {
+      setSearchedFolders(null);
+      return;
+    }
+
+    try {
+      // If inside a folder, search deep under that folder.
+      const params: any = { q };
+      if (currentFolder) {
+        params.under_folder_id = currentFolder.id;
+      }
+
+      const res = await api.get("/folders/shared/search", { params });
+      const raw = (res.data ?? []) as any[];
+
+      const results: SharedFolder[] = raw.map((f) => ({
+        id: f.id,
+        name: f.name,
+        parent_id: f.parentid ?? null,
+        department_id: f.departmentid ?? null,
+        department_name: f.departmentname ?? null,
+        owner_id: f.ownerid ?? null,
+        owner_name: f.ownername ?? null,
+        permission: f.permission,
+      }));
+
+      setSearchedFolders(results);
+    } catch (e) {
+      console.error("Failed to search shared folders", e);
+      // On error, fall back to no search results to avoid breaking UI.
+      setSearchedFolders([]);
+    }
+  };
+
+    const searchSharedDocuments = async (query: string) => {
+    const q = query.trim();
+    if (!q) {
+      setSearchedDocs(null);
+      return;
+    }
+
+    try {
+      const params: any = { q };
+
+      // At root: global shared docs search (you already use allSharedDocs).
+      // Inside a folder: deep search under that folder.
+      if (currentFolder) {
+        params.under_folder_id = currentFolder.id;
+      }
+
+      const res = await api.get("/documents/shared/search", { params });
+      const raw = (res.data ?? []) as any[];
+
+      const results: DocumentRow[] = raw.map((d) => ({
+        id: d.id,
+        title: d.title,
+        original_filename: d.originalfilename,
+        mime_type: d.mimetype,
+        size_bytes: d.sizebytes,
+        uploaded_at: d.uploadedat,
+        last_opened_at: d.lastopenedat ?? null,
+        folder_id: d.folderid ?? null,
+        department_id: d.departmentid,
+        folder_name: d.foldername ?? null,
+        department_name: d.departmentname ?? null,
+        owner_id: d.ownerid ?? null,
+        owner_name: d.ownername ?? null,
+        share_permission: d.sharepermission,
+      }));
+
+      setSearchedDocs(results);
+    } catch (e) {
+      console.error("Failed to search shared documents", e);
+      setSearchedDocs([]);
+    }
+  };
+
+
+
   // ---------- effects ----------
 
   useEffect(() => {
@@ -219,10 +310,25 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
   // debounce search
   useEffect(() => {
     const handle = setTimeout(() => {
-      setDebouncedSearch(searchQuery.trim());
+      const trimmed = searchQuery.trim();
+      setDebouncedSearch(trimmed);
+
+      if (trimmed.length === 0) {
+        // Clear search results when query is cleared.
+        setSearchedFolders(null);
+        setSearchedDocs(null);
+      } else {
+        // Trigger API-based folder search (root or under current folder).
+        searchSharedFolders(trimmed);
+        // Trigger document search (root/global or under current folder).
+        searchSharedDocuments(trimmed);
+      }
     }, 300);
+
     return () => clearTimeout(handle);
-  }, [searchQuery]);
+  }, [searchQuery, currentFolder]);
+
+
 
   // preview (using /documents/{id}/preview)
   useEffect(() => {
@@ -267,16 +373,19 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
 
   const visibleFolders = useMemo(() => {
     const q = debouncedSearch.toLowerCase();
+    const hasSearch = q.length > 0;
+
     let source: SharedFolder[];
 
-    if (!currentFolder) {
-      source = q
-        ? folders.filter((f) => f.name.toLowerCase().includes(q))
-        : folders.filter((f) => f.parent_id === null);
+    if (hasSearch && searchedFolders !== null) {
+      // When searching, use API results (root or under current folder).
+      source = searchedFolders;
+    } else if (!currentFolder) {
+      // No search at root: only top-level shared roots.
+      source = folders.filter((f) => f.parent_id === null);
     } else {
-      source = q
-        ? folderChildren.filter((f) => f.name.toLowerCase().includes(q))
-        : folderChildren;
+      // No search inside folder: show its direct children.
+      source = folderChildren;
     }
 
     const list = [...source];
@@ -284,18 +393,26 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
       a.name.toLowerCase().localeCompare(b.name.toLowerCase())
     );
     return list;
-  }, [folders, folderChildren, currentFolder, debouncedSearch]);
+  }, [folders, folderChildren, currentFolder, debouncedSearch, searchedFolders]);
+
 
   const filteredSortedDocs = useMemo(() => {
     const q = debouncedSearch.toLowerCase();
     const hasSearch = q.length > 0;
 
     let source: DocumentRow[];
-    if (!currentFolder) {
-      source = hasSearch ? allSharedDocs : documents;
+
+    if (hasSearch && searchedDocs !== null) {
+      // When searching, use API results (root or under current folder).
+      source = searchedDocs;
+    } else if (!currentFolder) {
+      // No search at root: show top-level docs (no folder) as before.
+      source = documents;
     } else {
+      // No search inside folder: use direct children files.
       source = folderDocs;
     }
+
 
     let list = [...source];
 
@@ -341,13 +458,14 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
 
     return list;
   }, [
-    allSharedDocs,
     documents,
     folderDocs,
     currentFolder,
     debouncedSearch,
     sortMode,
+    searchedDocs,
   ]);
+
 
 
 
