@@ -1,5 +1,6 @@
 // src/pages/DepartmentManagerPage.tsx
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
@@ -43,7 +44,10 @@ type LayoutContext = {
 // NOTE: we will wire this into routing after the page compiles.
 
 export default function DepartmentManagerPage() {
+  const navigate = useNavigate();
+
   const [departments, setDepartments] = useState<Department[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -137,6 +141,13 @@ export default function DepartmentManagerPage() {
     setLogoFile(null);
     setEditOpen(true);
   };
+
+  const openInDocumentManager = (dept: Department) => {
+    navigate("/files", {
+      state: { departmentId: dept.id },
+    });
+  };
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -367,6 +378,14 @@ export default function DepartmentManagerPage() {
                     <td className="py-2 pr-3 text-right">
                       <Button
                         size="xs"
+                        variant="primary"
+                        className="mr-2"
+                        onClick={() => openInDocumentManager(dept)}
+                      >
+                        Open files
+                      </Button>
+                      <Button
+                        size="xs"
                         variant="ghost"
                         className="mr-2"
                         onClick={() => handleToggleActive(dept)}
@@ -439,9 +458,17 @@ export default function DepartmentManagerPage() {
                 <div className="mb-2 line-clamp-2 text-[11px] text-slate-300">
                   {dept.description || "No description."}
                 </div>
+
                 <div className="mt-auto flex items-center justify-between pt-1 text-[11px] text-slate-400">
                   <span>{dept.code || "No code"}</span>
                   <div className="flex gap-1">
+                    <Button
+                      size="xs"
+                      variant="primary"
+                      onClick={() => openInDocumentManager(dept)}
+                    >
+                      Open files
+                    </Button>
                     <Button
                       size="xs"
                       variant="ghost"

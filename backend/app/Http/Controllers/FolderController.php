@@ -28,7 +28,9 @@ class FolderController extends Controller
             $query->where('parent_id', $request->parent_id);
         }
 
-        if (!$user->isAdmin()) {
+        // Non‑admin users (staff) restricted to own department + shared folders.
+        // SuperAdmin and Admin can see all departments.
+        if (!$user->isAdmin() && !$user->isSuperAdmin()) {
             $deptId = $user->department_id;
 
             $sharedFolderIds = Share::where('target_user_id', $user->id)

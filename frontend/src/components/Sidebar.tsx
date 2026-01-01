@@ -45,6 +45,15 @@ export default function Sidebar({
           Document Manager
         </Button>
 
+        <Button
+          variant={itemVariant(activePage === "shared")}
+          size="sm"
+          className="w-full justify-start"
+          onClick={() => onNavigate("shared")}
+        >
+          Shared Files
+        </Button>
+
         {isSuperAdmin && (
           <Button
             variant={itemVariant(activePage === "departments")}

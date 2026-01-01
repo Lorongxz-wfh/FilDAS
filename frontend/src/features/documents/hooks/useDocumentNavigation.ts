@@ -12,9 +12,15 @@ import type {
 type Params = {
   isSuperAdmin: boolean;
   userDepartmentId: number | null;
+  initialDepartmentId?: number | null;
 };
 
-export function useDocumentNavigation({ isSuperAdmin, userDepartmentId }: Params) {
+export function useDocumentNavigation({
+  isSuperAdmin,
+  userDepartmentId,
+  initialDepartmentId = null,
+}: Params) {
+
   const [departments, setDepartments] = useState<Department[]>([]);
   const [folders, setFolders] = useState<FolderRow[]>([]);
   const [documents, setDocuments] = useState<DocumentRow[]>([]);
@@ -129,6 +135,7 @@ export function useDocumentNavigation({ isSuperAdmin, userDepartmentId }: Params
         const deptItems: Department[] = deptRes.data.data ?? deptRes.data;
         setDepartments(deptItems);
 
+        // 1) If coming from SharedFiles deep link
         const storedSharedTarget = localStorage.getItem("fildas.sharedTarget");
         if (storedSharedTarget) {
           try {
@@ -167,12 +174,17 @@ export function useDocumentNavigation({ isSuperAdmin, userDepartmentId }: Params
           }
         }
 
-        const storedDeptId = localStorage.getItem(
-          "fildas.currentDepartmentId"
-        );
-        const storedFolderId = localStorage.getItem("fildas.currentFolderId");
+        // 2) Explicit initialDepartmentId from navigation (DepartmentManagerPage)
+        if (initialDepartmentId) {
+          const dept =
+            deptItems.find((d) => d.id === initialDepartmentId) || null;
+          if (dept) {
+            await loadDepartmentContents(dept);
+            return;
+          }
+        }
 
-        // Staff & Admin: force to their own department
+        // 3) Non‑super users: force to their own department
         if (!isSuperAdmin) {
           const userDeptId = userDepartmentId;
           if (!userDeptId) {
@@ -192,46 +204,11 @@ export function useDocumentNavigation({ isSuperAdmin, userDepartmentId }: Params
           return;
         }
 
-        // Super Admin: restore previous context
-        if (!storedDeptId) {
-          setCurrentDepartment(null);
-          setCurrentFolder(null);
-          return;
-        }
-
-        const deptId = Number(storedDeptId);
-        const dept = deptItems.find((d) => d.id === deptId);
-        if (!dept) {
-          localStorage.removeItem("fildas.currentDepartmentId");
-          localStorage.removeItem("fildas.currentFolderId");
-          setCurrentDepartment(null);
-          setCurrentFolder(null);
-          return;
-        }
-
-        if (!storedFolderId) {
-          await loadDepartmentContents(dept);
-          return;
-        }
-
-        const folderId = Number(storedFolderId);
-        try {
-          const folderRes = await api.get<FolderRow>(`/folders/${folderId}`);
-          const folder = folderRes.data;
-          if (folder.department_id !== dept.id) {
-            await loadDepartmentContents(dept);
-            return;
-          }
-          await loadDepartmentContents(dept);
-          await loadFolderContents(folder);
-        } catch (e) {
-          console.error(
-            "Failed to restore folder, falling back to dept root",
-            e
-          );
-          localStorage.removeItem("fildas.currentFolderId");
-          await loadDepartmentContents(dept);
-        }
+        // 4) Super Admin default: root (no department selected)
+        setCurrentDepartment(null);
+        setCurrentFolder(null);
+        localStorage.removeItem("fildas.currentDepartmentId");
+        localStorage.removeItem("fildas.currentFolderId");
       } catch (e) {
         console.error(e);
         setError("Failed to load departments.");
@@ -241,7 +218,8 @@ export function useDocumentNavigation({ isSuperAdmin, userDepartmentId }: Params
     };
 
     loadInitial();
-  }, [isSuperAdmin, userDepartmentId]);
+  }, [isSuperAdmin, userDepartmentId, initialDepartmentId]);
+
 
   const handleGoBack = () => {
     if (currentFolder) {

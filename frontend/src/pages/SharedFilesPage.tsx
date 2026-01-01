@@ -664,7 +664,7 @@ export default function SharedFilesPage() {
                 variant="ghost"
                 onClick={handleBackToSharedList}
               >
-                Back
+                ← Back
               </Button>
               <span className="text-slate-600">/</span>
               {folderPath.map((folder, index) => (

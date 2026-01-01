@@ -1,6 +1,7 @@
 // src/pages/DocumentManagerPage.tsx
 import { useEffect, useState } from "react";
-import { useOutletContext } from "react-router-dom";
+import { useLocation, useOutletContext } from "react-router-dom";
+
 import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/Button";
 
@@ -51,6 +52,8 @@ const Loader = () => (
 
 export default function DocumentManagerPage() {
   const { user, isAdmin, isSuperAdmin } = useOutletContext<LayoutContext>();
+  const location = useLocation() as { state?: { departmentId?: number } };
+  const initialDepartmentId = location.state?.departmentId ?? null;
 
   const {
     departments,
@@ -76,12 +79,13 @@ export default function DocumentManagerPage() {
   } = useDocumentNavigation({
     isSuperAdmin,
     userDepartmentId: user.department_id,
+    initialDepartmentId,
   });
-
-  console.log("doc manager folders sample", folders.slice(0, 10));
 
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [sortMode, setSortMode] = useState<SortMode>("alpha");
+
+  console.log("doc manager folders sample", folders.slice(0, 10));
 
   const {
     selectedItem,
@@ -325,6 +329,28 @@ export default function DocumentManagerPage() {
     }
   };
 
+  const handleReloadCurrent = async () => {
+    setSelectedItem(null);
+    setDetailsOpen(false);
+    setSearchQuery("");
+
+    if (currentFolder) {
+      await loadFolderContents(currentFolder);
+    } else if (currentDepartment) {
+      await loadDepartmentContents(currentDepartment);
+    } else if (isSuperAdmin) {
+      // For super admin at root, just reload departments list
+      try {
+        const res = await api.get("/departments");
+        const deptItems: Department[] = res.data.data ?? res.data;
+        setDepartments(deptItems);
+      } catch (e) {
+        console.error(e);
+        notify("Failed to reload departments.", "error");
+      }
+    }
+  };
+
   const toolbarLabel =
     selectedItem == null
       ? "No item selected"
@@ -348,7 +374,7 @@ export default function DocumentManagerPage() {
       </h1>
 
       {/* main toolbar */}
-      <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+      <div className="mb-2.5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         {/* LEFT: uploads only when inside a department (not departments list) */}
         <div className="flex h-8.5 items-center">
           <div className="flex flex-wrap gap-2">
@@ -494,6 +520,10 @@ export default function DocumentManagerPage() {
 
       {/* breadcrumbs + back */}
       <div className="mb-2 flex items-center gap-2 text-xs text-slate-300">
+        <Button size="xs" variant="secondary" onClick={handleReloadCurrent}>
+          Reload
+        </Button>
+
         <Button
           size="xs"
           variant="ghost"

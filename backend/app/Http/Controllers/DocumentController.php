@@ -34,7 +34,9 @@ class DocumentController extends Controller
             });
         }
 
-        if (!$user->isAdmin()) {
+        // Non‑admin users (staff) are restricted to their own department + shares.
+        // SuperAdmin (role_id === 1) and Admin (role_id === 2) can see any department.
+        if (!$user->isAdmin() && !$user->isSuperAdmin()) {
             $deptId = $user->department_id;
             $sharedDocumentIds = Share::where('target_user_id', $user->id)
                 ->whereNotNull('document_id')
@@ -50,6 +52,7 @@ class DocumentController extends Controller
                 }
             });
         }
+
 
         $sortBy    = $request->get('sort_by', 'uploaded_at');
         $sortOrder = $request->get('sort_order', 'desc');
