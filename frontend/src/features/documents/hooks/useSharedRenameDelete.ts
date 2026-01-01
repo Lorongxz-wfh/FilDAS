@@ -7,18 +7,29 @@ import type {
   SharedFolder,
 } from "./useSharedFiles";
 import { notify } from "../../../lib/notify";
+import {
+  canModifySharedFile,
+  canModifySharedFolder,
+} from "../lib/selection";
 
 type Params = {
+  selectedItem: Item | null;
+  setSelectedItem: React.Dispatch<React.SetStateAction<Item | null>>;
+  detailsOpen: boolean;
+  setDetailsOpen: React.Dispatch<React.SetStateAction<boolean>>;
+
   setAllSharedDocs: React.Dispatch<React.SetStateAction<DocumentRow[]>>;
   setDocuments: React.Dispatch<React.SetStateAction<DocumentRow[]>>;
   setFolderDocs: React.Dispatch<React.SetStateAction<DocumentRow[]>>;
   setFolders: React.Dispatch<React.SetStateAction<SharedFolder[]>>;
   setFolderChildren: React.Dispatch<React.SetStateAction<SharedFolder[]>>;
 
-  // For auto‑reload on permission change (403)
   currentFolder: SharedFolder | null;
   loadTopLevelShared: () => Promise<void>;
   loadSharedFolderContents: (folder: SharedFolder) => Promise<void>;
+
+  userId: number;
+  isAdmin: boolean;
 };
 
 
@@ -32,13 +43,33 @@ export function useSharedRenameDelete(params: Params) {
     currentFolder,
     loadTopLevelShared,
     loadSharedFolderContents,
+    userId,
+    isAdmin,
   } = params;
+
 
 
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
 
+  // Derived permissions for the currently selected item
+  const canRenameSelected = (() => {
+    if (!selectedItem) return false;
+    if (selectedItem.kind === "file") {
+      return canModifySharedFile(selectedItem.data as DocumentRow, userId, isAdmin);
+    }
+    if (selectedItem.kind === "folder") {
+      return canModifySharedFolder(selectedItem.data as SharedFolder, userId, isAdmin);
+    }
+    return false;
+  })();
+
+  const canDeleteSelected = canRenameSelected;
+  const canMoveSelected = canRenameSelected;
+
   const [renameOpen, setSharedRenameOpen] = useState(false);
+
+  
   const [renameName, setSharedRenameName] = useState("");
   const [renaming, setSharedRenaming] = useState(false);
   const [renameError, setSharedRenameError] = useState<string | null>(null);
@@ -198,6 +229,11 @@ export function useSharedRenameDelete(params: Params) {
     setSelectedItem,
     detailsOpen,
     setDetailsOpen,
+
+    // per-selected-item permissions
+    canRenameSelected,
+    canDeleteSelected,
+    canMoveSelected,
 
     // rename modal state
     sharedRenameOpen: renameOpen,

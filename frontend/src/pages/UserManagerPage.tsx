@@ -9,11 +9,9 @@ type User = {
   id: number;
   name: string;
   email: string;
-  // e.g. "Super Admin" / "Admin" / "Staff"
   role: string | null;
-  // "active" | "inactive" coming from API (effective_status)
   status: "active" | "inactive";
-  // optional, if you include it from backend
+  department_id: number | null;
   department_name?: string | null;
 };
 
@@ -22,9 +20,24 @@ type UserFormState = {
   name: string;
   email: string;
   role: "Super Admin" | "Admin" | "Staff";
-  // UI-level flag; backend still stores raw status column you decide
   status: "active" | "inactive";
+  department_id: number | null;
   password: string;
+};
+
+type UserDetails = User & {
+  owned_departments: number;
+  owned_folders: number;
+  owned_documents: number;
+  outgoing_shares: number;
+  incoming_shares: number;
+  created_at: string;
+  updated_at: string;
+};
+
+type Department = {
+  id: number;
+  name: string;
 };
 
 const EMPTY_FORM: UserFormState = {
@@ -32,6 +45,7 @@ const EMPTY_FORM: UserFormState = {
   email: "",
   role: "Staff",
   status: "active",
+  department_id: null,
   password: "",
 };
 
@@ -43,6 +57,7 @@ const ROLE_NAME_TO_ID: Record<UserFormState["role"], number> = {
 
 export default function UserManagerPage() {
   const [users, setUsers] = useState<User[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [userModalOpen, setUserModalOpen] = useState(false);
@@ -56,6 +71,18 @@ export default function UserManagerPage() {
   const [statusFilter, setStatusFilter] = useState<
     "active" | "inactive" | "all"
   >("active");
+  const [roleFilter, setRoleFilter] = useState<
+    "all" | "Super Admin" | "Admin" | "Staff"
+  >("all");
+
+  const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [userDetails, setUserDetails] = useState<UserDetails | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+
+  const [departmentFilter, setDepartmentFilter] = useState<number | "all">(
+    "all"
+  );
   const [sortMode, setSortMode] = useState<
     "dept-role-name" | "role-name" | "name"
   >("dept-role-name");
@@ -71,8 +98,32 @@ export default function UserManagerPage() {
     }
   };
 
+  const loadUserDetails = async (userId: number) => {
+    setDetailsLoading(true);
+    try {
+      const res = await api.get<UserDetails>(`/users/${userId}`);
+      setUserDetails(res.data);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to load user details.");
+      setUserDetails(null);
+    } finally {
+      setDetailsLoading(false);
+    }
+  };
+
+  const loadDepartments = async () => {
+    try {
+      const res = await api.get<{ data: Department[] }>("/departments");
+      setDepartments(res.data.data ?? []);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   useEffect(() => {
     loadUsers();
+    loadDepartments();
   }, []);
 
   const openCreate = () => {
@@ -94,12 +145,18 @@ export default function UserManagerPage() {
       name: user.name,
       email: user.email,
       role: roleName,
-      // map effective status back to UI status toggle
       status: user.status,
+      department_id: user.department_id ?? null,
       password: "",
     });
     setErrorMsg(null);
     setUserModalOpen(true);
+  };
+
+  const openDetails = (user: User) => {
+    setSelectedUserId(user.id);
+    setDetailsOpen(true);
+    loadUserDetails(user.id);
   };
 
   const handleChange =
@@ -124,6 +181,7 @@ export default function UserManagerPage() {
           name: form.name,
           email: form.email,
           role_id,
+          department_id: form.department_id,
           status: rawStatus,
           password: form.password,
         });
@@ -132,6 +190,7 @@ export default function UserManagerPage() {
           name: form.name,
           email: form.email,
           role_id,
+          department_id: form.department_id,
           status: rawStatus,
           ...(form.password ? { password: form.password } : {}),
         });
@@ -148,6 +207,39 @@ export default function UserManagerPage() {
     }
   };
 
+  const updateUserStatus = async (
+    user: User,
+    nextStatus: "active" | "inactive"
+  ) => {
+    try {
+      const rawStatus = nextStatus === "inactive" ? "disabled" : "active";
+      await api.put(`/users/${user.id}`, {
+        status: rawStatus,
+      });
+      await loadUsers();
+    } catch (err) {
+      console.error(err);
+      alert("Failed to update user status.");
+    }
+  };
+
+  const deleteUser = async (user: User) => {
+    if (
+      !window.confirm(
+        `Delete user "${user.name}"? This can be undone only by database restore.`
+      )
+    ) {
+      return;
+    }
+    try {
+      await api.delete(`/users/${user.id}`);
+      await loadUsers();
+    } catch (err) {
+      console.error(err);
+      alert("Failed to delete user.");
+    }
+  };
+
   const filtered = users
     .filter((u) => {
       const q = search.toLowerCase();
@@ -159,7 +251,15 @@ export default function UserManagerPage() {
       const matchesStatus =
         statusFilter === "all" ? true : u.status === statusFilter;
 
-      return matchesSearch && matchesStatus;
+      const matchesRole =
+        roleFilter === "all" ? true : (u.role ?? "") === roleFilter;
+
+      const matchesDepartment =
+        departmentFilter === "all"
+          ? true
+          : u.department_id === departmentFilter;
+
+      return matchesSearch && matchesStatus && matchesRole && matchesDepartment;
     })
     .sort((a, b) => {
       if (sortMode === "name") {
@@ -212,7 +312,7 @@ export default function UserManagerPage() {
             </button>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <input
               className="rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
               placeholder="Search users…"
@@ -228,7 +328,39 @@ export default function UserManagerPage() {
             >
               <option value="active">Active only</option>
               <option value="inactive">Inactive only</option>
-              <option value="all">All users</option>
+              <option value="all">All statuses</option>
+            </select>
+            <select
+              className="rounded-md border border-slate-700 bg-slate-900/60 px-2 py-2 text-sm text-white focus:outline-none"
+              value={roleFilter}
+              onChange={(e) =>
+                setRoleFilter(
+                  e.target.value as "all" | "Super Admin" | "Admin" | "Staff"
+                )
+              }
+            >
+              <option value="all">All roles</option>
+              <option value="Super Admin">Super Admin</option>
+              <option value="Admin">Admin</option>
+              <option value="Staff">Staff</option>
+            </select>
+            <select
+              className="rounded-md border border-slate-700 bg-slate-900/60 px-2 py-2 text-sm text-white focus:outline-none"
+              value={
+                departmentFilter === "all" ? "all" : String(departmentFilter)
+              }
+              onChange={(e) =>
+                setDepartmentFilter(
+                  e.target.value === "all" ? "all" : Number(e.target.value)
+                )
+              }
+            >
+              <option value="all">All departments</option>
+              {departments.map((dept) => (
+                <option key={dept.id} value={dept.id}>
+                  {dept.name}
+                </option>
+              ))}
             </select>
             <select
               className="rounded-md border border-slate-700 bg-slate-900/60 px-2 py-2 text-sm text-white focus:outline-none"
@@ -246,93 +378,226 @@ export default function UserManagerPage() {
           </div>
         </div>
 
-        {/* Users table */}
-        <section className="flex-1 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-sm">
-          <div className="mb-2 flex items-center justify-between">
-            <p className="text-xs font-semibold uppercase text-slate-400">
-              Users
-            </p>
-            <p className="text-xs text-slate-500">
-              {loading
-                ? "Loading…"
-                : `Showing ${filtered.length} of ${users.length} user(s)`}
-            </p>
-          </div>
+        <div
+          className={`h-[calc(100vh-180px)] ${
+            detailsOpen ? "flex gap-3" : "flex"
+          }`}
+        >
+          {/* Users table */}
+          <section className="flex-1 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-sm">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-xs font-semibold uppercase text-slate-400">
+                Users
+              </p>
+              <p className="text-xs text-slate-500">
+                {loading
+                  ? "Loading…"
+                  : `Showing ${filtered.length} of ${users.length} user(s)`}
+              </p>
+            </div>
 
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="border-b border-slate-800 text-xs uppercase text-slate-400">
-                <tr>
-                  <th className="py-2 pr-4">Name</th>
-                  <th className="py-2 pr-4">Email</th>
-                  <th className="py-2 pr-4">Department</th>
-                  <th className="py-2 pr-4">Role</th>
-                  <th className="py-2 pr-4">Status</th>
-                  <th className="py-2 pr-4">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800">
-                {loading && (
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead className="border-b border-slate-800 text-xs uppercase text-slate-400">
                   <tr>
-                    <td
-                      colSpan={6}
-                      className="py-4 text-center text-sm text-slate-500"
-                    >
-                      Loading users…
-                    </td>
+                    <th className="py-2 pr-4">Name</th>
+                    <th className="py-2 pr-4">Email</th>
+                    <th className="py-2 pr-4">Department</th>
+                    <th className="py-2 pr-4">Role</th>
+                    <th className="py-2 pr-4">Status</th>
+                    <th className="py-2 pr-4">Actions</th>
                   </tr>
-                )}
-
-                {!loading &&
-                  filtered.map((user) => (
-                    <tr key={user.id} className="hover:bg-slate-800/60">
-                      <td className="py-2 pr-4 text-white">{user.name}</td>
-                      <td className="py-2 pr-4 text-slate-400">{user.email}</td>
-                      <td className="py-2 pr-4 text-slate-400">
-                        {user.department_name ?? "—"}
-                      </td>
-                      <td className="py-2 pr-4">
-                        <span className="rounded-full bg-slate-500/20 px-2 py-0.5 text-xs text-slate-200">
-                          {user.role ?? "—"}
-                        </span>
-                      </td>
+                </thead>
+                <tbody className="divide-y divide-slate-800">
+                  {loading && (
+                    <tr>
                       <td
-                        className={
-                          "py-2 pr-4 text-xs " +
-                          (user.status === "active"
-                            ? "text-emerald-400"
-                            : "text-slate-400")
-                        }
+                        colSpan={6}
+                        className="py-4 text-center text-sm text-slate-500"
                       >
-                        {user.status === "active" ? "Active" : "Inactive"}
-                      </td>
-                      <td className="py-2 pr-4 space-x-2">
-                        <button
-                          className="text-xs text-sky-400 hover:underline"
-                          onClick={() => openEditWithUser(user)}
-                        >
-                          Edit
-                        </button>
+                        Loading users…
                       </td>
                     </tr>
-                  ))}
+                  )}
 
-                {!loading && filtered.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={6}
-                      className="py-4 text-center text-sm text-slate-500"
-                    >
-                      {users.length === 0
-                        ? "No users yet."
-                        : "No users match your filters."}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
+                  {!loading &&
+                    filtered.map((user) => (
+                      <tr key={user.id} className="hover:bg-slate-800/60">
+                        <td className="py-2 pr-4 text-white">{user.name}</td>
+                        <td className="py-2 pr-4 text-slate-400">
+                          {user.email}
+                        </td>
+                        <td className="py-2 pr-4 text-slate-400">
+                          {user.department_name ?? "—"}
+                        </td>
+                        <td className="py-2 pr-4">
+                          <span className="rounded-full bg-slate-500/20 px-2 py-0.5 text-xs text-slate-200">
+                            {user.role ?? "—"}
+                          </span>
+                        </td>
+                        <td
+                          className={
+                            "py-2 pr-4 text-xs " +
+                            (user.status === "active"
+                              ? "text-emerald-400"
+                              : "text-slate-400")
+                          }
+                        >
+                          {user.status === "active" ? "Active" : "Inactive"}
+                        </td>
+                        <td className="py-2 pr-4 space-x-2 text-xs">
+                          <button
+                            className="text-sky-400 hover:underline"
+                            onClick={() => openDetails(user)}
+                          >
+                            Details
+                          </button>
+                          <button
+                            className="text-sky-400 hover:underline"
+                            onClick={() => openEditWithUser(user)}
+                          >
+                            Edit
+                          </button>
+                          {user.status === "active" ? (
+                            <button
+                              className="text-amber-400 hover:underline"
+                              onClick={() => updateUserStatus(user, "inactive")}
+                            >
+                              Disable
+                            </button>
+                          ) : (
+                            <button
+                              className="text-emerald-400 hover:underline"
+                              onClick={() => updateUserStatus(user, "active")}
+                            >
+                              Enable
+                            </button>
+                          )}
+                          <button
+                            className="text-rose-400 hover:underline"
+                            onClick={() => deleteUser(user)}
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+
+                  {!loading && filtered.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={6}
+                        className="py-4 text-center text-sm text-slate-500"
+                      >
+                        {users.length === 0
+                          ? "No users yet."
+                          : "No users match your filters."}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          {/* Details side panel */}
+          {detailsOpen && (
+            <aside className="w-80 shrink-0 rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-sm">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase text-slate-400">
+                  User details
+                </p>
+                <button
+                  className="text-xs text-slate-400 hover:text-slate-200"
+                  onClick={() => setDetailsOpen(false)}
+                >
+                  Close
+                </button>
+              </div>
+
+              {!detailsOpen && (
+                <p className="text-xs text-slate-500">
+                  Select “Details” on a user to view more information.
+                </p>
+              )}
+
+              {detailsOpen && detailsLoading && (
+                <p className="text-xs text-slate-500">Loading details…</p>
+              )}
+
+              {detailsOpen && !detailsLoading && userDetails && (
+                <div className="space-y-3 text-xs">
+                  <div>
+                    <p className="text-slate-500">Name</p>
+                    <p className="text-white">{userDetails.name}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">Email</p>
+                    <p className="text-slate-200">{userDetails.email}</p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <div>
+                      <p className="text-slate-500">Role</p>
+                      <p className="text-slate-200">
+                        {userDetails.role ?? "—"}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Department</p>
+                      <p className="text-slate-200">
+                        {userDetails.department_name ?? "—"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <p className="text-slate-500">Owned documents</p>
+                      <p className="text-slate-200">
+                        {userDetails.owned_documents}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Owned folders</p>
+                      <p className="text-slate-200">
+                        {userDetails.owned_folders}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Owned departments</p>
+                      <p className="text-slate-200">
+                        {userDetails.owned_departments}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Outgoing shares</p>
+                      <p className="text-slate-200">
+                        {userDetails.outgoing_shares}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">Incoming shares</p>
+                      <p className="text-slate-200">
+                        {userDetails.incoming_shares}
+                      </p>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">Created at</p>
+                    <p className="text-slate-200">
+                      {new Date(userDetails.created_at).toLocaleString()}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">Updated at</p>
+                    <p className="text-slate-200">
+                      {new Date(userDetails.updated_at).toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </aside>
+          )}
+        </div>
       </div>
 
       {/* New/Edit user modal */}
@@ -396,6 +661,29 @@ export default function UserManagerPage() {
                 <option value="inactive">Inactive</option>
               </select>
             </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs text-slate-400">
+              Department
+            </label>
+            <select
+              className="w-full rounded-md border border-slate-700 bg-slate-900/60 px-3 py-2 text-sm text-white focus:outline-none"
+              value={form.department_id ?? ""}
+              onChange={(e) =>
+                setForm((prev) => ({
+                  ...prev,
+                  department_id: e.target.value ? Number(e.target.value) : null,
+                }))
+              }
+            >
+              <option value="">— No department —</option>
+              {departments.map((dept) => (
+                <option key={dept.id} value={dept.id}>
+                  {dept.name}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div>

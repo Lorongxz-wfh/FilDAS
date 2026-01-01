@@ -1,10 +1,9 @@
 // src/pages/SharedFilesPage.tsx
-import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { useOutletContext } from "react-router-dom";
 import { Button } from "../components/ui/Button";
 import { DetailsPanel } from "../components/documents/DetailsPanel";
-import type { Item, DocumentRow as BaseDocumentRow } from "../types/documents";
+import type { Item } from "../types/documents";
 import { Card } from "../components/ui/Card";
 import { IconButton } from "../components/ui/IconButton";
 import { DropdownMenu } from "../components/ui/DropdownMenu";
@@ -15,11 +14,6 @@ import { RenameModal } from "../components/documents/RenameModal";
 import { SharedMoveCopyModal } from "../components/documents/SharedMoveCopyModal";
 
 import { useDepartmentTree } from "../lib/useDepartmentTree";
-
-import type {
-  Department,
-  FolderRow as DeptFolderRow,
-} from "../types/documents";
 
 // New Imports are here after refactoring
 import { formatSize } from "../features/documents/lib/formatSize";
@@ -37,7 +31,6 @@ import { useSharedRenameDelete } from "../features/documents/hooks/useSharedRena
 import { notify } from "../lib/notify";
 import { useDocumentPreview } from "../features/documents/hooks/useDocumentPreview";
 
-
 type LayoutContext = {
   user: {
     id: number;
@@ -47,10 +40,6 @@ type LayoutContext = {
   };
   isAdmin: boolean;
 };
-
-type SortMode = "alpha" | "recent" | "ownerDept";
-type ViewMode = "grid" | "list";
-type SharePermission = "viewer" | "contributor" | "editor";
 
 export default function SharedFilesPage() {
   // ---------- context / hooks ----------
@@ -90,8 +79,20 @@ export default function SharedFilesPage() {
     setViewMode,
     sortMode,
     setSortMode,
+
+    // selection + permissions
+    selectedItem,
+    setSelectedItem,
+    detailsOpen,
+    setDetailsOpen,
+    canUploadHere,
+    canEditAccess,
+
+    // layout
     detailsWidth,
     setDetailsWidth,
+
+    // modals/state
     sharedUploadOpen,
     setSharedUploadOpen,
     sharedUploadMode,
@@ -110,8 +111,12 @@ export default function SharedFilesPage() {
     setSharedPendingAction,
     sharedMoveCopyTargetFolderId,
     setSharedMoveCopyTargetFolderId,
+
+    // data loaders
     loadTopLevelShared,
     loadSharedFolderContents,
+
+    // derived lists
     visibleFolders,
     filteredSortedDocs,
   } = useSharedFiles({
@@ -119,36 +124,44 @@ export default function SharedFilesPage() {
     isAdmin,
   });
 
-  const {
-    selectedItem,
-    setSelectedItem,
-    detailsOpen,
-    setDetailsOpen,
-    sharedRenameOpen,
-    setSharedRenameOpen,
-    sharedRenameName,
-    setSharedRenameName,
-    sharedRenaming,
-    sharedRenameError,
-    setSharedRenameError,
-    getSharedItemName,
-    handleSharedRenameSubmit,
-    handleSharedDeleteSelected,
-  } = useSharedRenameDelete({
-    setAllSharedDocs,
-    setDocuments,
-    setFolderDocs,
-    setFolders,
-    setFolderChildren,
-    currentFolder,
-    loadTopLevelShared,
-    loadSharedFolderContents,
-  });
+const {
+  canRenameSelected,
+  canDeleteSelected,
+  canMoveSelected,
+  sharedRenameOpen,
+  setSharedRenameOpen,
+  sharedRenameName,
+  setSharedRenameName,
+  sharedRenaming,
+  sharedRenameError,
+  setSharedRenameError,
+  getSharedItemName,
+  handleSharedRenameSubmit,
+  handleSharedDeleteSelected,
+} = useSharedRenameDelete({
+  // selection comes from useSharedFiles
+  selectedItem,
+  setSelectedItem,
+  detailsOpen,
+  setDetailsOpen,
 
-    const { previewUrl, previewLoading } = useDocumentPreview({
-      detailsOpen,
-      selectedItem,
-    });
+  setAllSharedDocs,
+  setDocuments,
+  setFolderDocs,
+  setFolders,
+  setFolderChildren,
+  currentFolder,
+  loadTopLevelShared,
+  loadSharedFolderContents,
+  userId: user.id,
+  isAdmin,
+});
+
+
+  const { previewUrl, previewLoading } = useDocumentPreview({
+    detailsOpen,
+    selectedItem,
+  });
 
   // ---------- helpers ----------
 
@@ -208,7 +221,6 @@ export default function SharedFilesPage() {
     await loadTopLevelShared();
   };
 
-
   const handleDownloadSelected = async () => {
     if (!selectedItem || selectedItem.kind !== "file") return;
     const doc = selectedItem.data as DocumentRow;
@@ -230,51 +242,6 @@ export default function SharedFilesPage() {
     } catch (e) {
       console.error(e);
       notify("Failed to download file.", "error");
-    }
-  };
-  // Add this handler near your existing handleDownloadSelected, etc.
-  const handleRename = async (item: Item) => {
-    if (!item || item.kind !== "file") return;
-
-    const newName = prompt(
-      "Enter new name:",
-      item.data.title || item.data.original_filename
-    );
-    if (
-      !newName ||
-      newName.trim() === (item.data.title || item.data.original_filename)
-    )
-      return;
-
-    setLoading(true);
-    try {
-      await api.patch(`/documents/${item.data.id}`, {
-        title: newName.trim(),
-      });
-
-      // Refresh current view
-      if (currentFolder) {
-        await loadSharedFolderContents(currentFolder);
-      } else {
-        await loadTopLevelShared();
-      }
-
-      notify("Document renamed successfully", "success");
-    } catch (error: any) {
-      const status = error?.response?.status;
-      const message =
-        error?.response?.data?.message || "Failed to rename document";
-
-      if (status === 403) {
-        notify(
-          "You do not have permission to rename this shared item.",
-          "error"
-        );
-      } else {
-        notify(message, "error");
-      }
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -404,30 +371,6 @@ export default function SharedFilesPage() {
     }
   };
 
-  const isOwner = (selectedItem?.data as any)?.owner_id === user.id;
-
-  const currentPermission = (() => {
-    if (currentFolder) {
-      return currentFolder.permission as SharePermission | null;
-    }
-
-    if (selectedItem?.kind === "folder") {
-      return (selectedItem.data as any).permission as SharePermission | null;
-    }
-
-    if (selectedItem?.kind === "file") {
-      return (selectedItem.data as any)
-        .share_permission as SharePermission | null;
-    }
-
-    return null;
-  })();
-
-  const isEditor = currentPermission === "editor" || isOwner || isAdmin;
-  const isContributor = currentPermission === "contributor";
-  const canUploadHere = isEditor || isContributor; // upload/new folder visibility
-  const canEditAccess = isEditor; // passed into DetailsPanel
-
   const toolbarLabel =
     selectedItem === null
       ? "No item selected"
@@ -503,46 +446,29 @@ export default function SharedFilesPage() {
                   Download
                 </Button>
 
-                {(() => {
-                  if (!selectedItem) return null;
+                {selectedItem && canRenameSelected && (
+                  <>
+                    <Button
+                      size="xs"
+                      onClick={() => {
+                        if (!selectedItem) return;
+                        if (selectedItem.kind === "file") {
+                          const doc = selectedItem.data as any;
+                          setSharedRenameName(
+                            doc.title || doc.original_filename || ""
+                          );
+                        } else {
+                          const folder = selectedItem.data as any;
+                          setSharedRenameName(folder.name || "");
+                        }
+                        setSharedRenameError(null);
+                        setSharedRenameOpen(true);
+                      }}
+                    >
+                      Rename
+                    </Button>
 
-                  // Compute per-item permission, mirroring backend:
-                  const kind = selectedItem.kind;
-
-                  if (kind === "folder") {
-                    const folder = selectedItem.data as SharedFolder;
-                    if (!canModifySharedFolder(folder, user.id, isAdmin)) {
-                      return null;
-                    }
-                  } else if (kind === "file") {
-                    const doc = selectedItem.data as DocumentRow;
-                    if (!canModifySharedFile(doc, user.id, isAdmin)) {
-                      return null;
-                    }
-                  }
-
-                  return (
-                    <>
-                      <Button
-                        size="xs"
-                        onClick={() => {
-                          if (!selectedItem) return;
-                          if (selectedItem.kind === "file") {
-                            const doc = selectedItem.data as any;
-                            setSharedRenameName(
-                              doc.title || doc.original_filename || ""
-                            );
-                          } else {
-                            const folder = selectedItem.data as any;
-                            setSharedRenameName(folder.name || "");
-                          }
-                          setSharedRenameError(null);
-                          setSharedRenameOpen(true);
-                        }}
-                      >
-                        Rename
-                      </Button>
-
+                    {canMoveSelected && (
                       <Button
                         size="xs"
                         onClick={() => {
@@ -552,13 +478,15 @@ export default function SharedFilesPage() {
                       >
                         Move
                       </Button>
+                    )}
 
+                    {canDeleteSelected && (
                       <Button size="xs" onClick={handleSharedDeleteSelected}>
                         Delete
                       </Button>
-                    </>
-                  );
-                })()}
+                    )}
+                  </>
+                )}
 
                 {/* Copy is allowed even for viewers */}
                 <Button
@@ -601,7 +529,7 @@ export default function SharedFilesPage() {
             <select
               className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 focus:outline-none"
               value={sortMode}
-              onChange={(e) => setSortMode(e.target.value as SortMode)}
+              onChange={(e) => setSortMode(e.target.value as any)}
             >
               <option value="alpha">Alphabetical</option>
               <option value="recent">Recently opened</option>

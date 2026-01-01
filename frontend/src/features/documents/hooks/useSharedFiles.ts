@@ -5,9 +5,14 @@ import type {
   Item,
   DocumentRow as BaseDocumentRow,
 } from "../../../types/documents";
+import {
+  canModifySharedFile,
+  canModifySharedFolder,
+} from "../lib/selection";
 
 export type SortMode = "alpha" | "recent" | "ownerDept";
 export type ViewMode = "grid" | "list";
+export type SharePermission = "viewer" | "contributor" | "editor";
 
 export type DocumentRow = BaseDocumentRow & {
   folder_name?: string | null;
@@ -71,6 +76,39 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
   const [detailsOpen, setDetailsOpen] = useState(false);
 
   const [detailsWidth, setDetailsWidth] = useState(320);
+
+  const currentPermission: SharePermission | null = (() => {
+    if (currentFolder) {
+      return currentFolder.permission as SharePermission | null;
+    }
+
+    if (selectedItem?.kind === "folder") {
+      return (selectedItem.data as any).permission as SharePermission | null;
+    }
+
+    if (selectedItem?.kind === "file") {
+      return (selectedItem.data as any)
+        .share_permission as SharePermission | null;
+    }
+
+    return null;
+  })();
+
+  const isOwner =
+    (selectedItem?.data as any)?.owner_id != null &&
+    Number((selectedItem?.data as any).owner_id) === Number(userId);
+
+  const isEditorContext =
+    currentPermission === "editor" || isOwner || isAdmin;
+
+  const isContributorContext = currentPermission === "contributor";
+
+  // Upload/new-folder visibility in current folder
+  const canUploadHere = !!currentFolder && (isEditorContext || isContributorContext);
+
+  // Access editing (who can change share settings)
+  const canEditAccess = isEditorContext;
+
 
 
   // modals
@@ -470,12 +508,20 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
     setViewMode,
     sortMode,
     setSortMode,
+
+    // selection + permissions
     selectedItem,
     setSelectedItem,
     detailsOpen,
     setDetailsOpen,
+    canUploadHere,
+    canEditAccess,
+
+    // layout
     detailsWidth,
     setDetailsWidth,
+
+    // modals/state
     sharedUploadOpen,
     setSharedUploadOpen,
     sharedUploadMode,
@@ -488,22 +534,18 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
     setSharedNewFolderName,
     sharedFolderError,
     setSharedFolderError,
-    sharedRenameOpen,
-    setSharedRenameOpen,
-    sharedRenameName,
-    setSharedRenameName,
-    sharedRenaming,
-    setSharedRenaming,
-    sharedRenameError,
-    setSharedRenameError,
     sharedMoveCopyOpen,
     setSharedMoveCopyOpen,
     sharedPendingAction,
     setSharedPendingAction,
     sharedMoveCopyTargetFolderId,
     setSharedMoveCopyTargetFolderId,
+
+    // data loaders
     loadTopLevelShared,
     loadSharedFolderContents,
+
+    // derived lists
     visibleFolders,
     filteredSortedDocs,
   };

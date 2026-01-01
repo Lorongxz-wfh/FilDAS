@@ -72,6 +72,9 @@ class DocumentController extends Controller
             'relative_path' => 'nullable|string',
         ]);
 
+        $user = $request->user();
+
+
         if (!$request->hasFile('file')) {
             return response()->json(['error' => 'No file uploaded'], 400);
         }
@@ -121,7 +124,7 @@ class DocumentController extends Controller
                         'name'          => $segmentName,
                         'parent_id'     => $parentId,
                         'department_id' => $baseDepartmentId,
-                        'owner_id'      => auth()->id(),
+                        'owner_id'      => $user->id,
                     ]);
                     $parentId = $newFolder->id;
                 }
@@ -129,7 +132,7 @@ class DocumentController extends Controller
             $targetFolderId = $parentId;
         }
 
-        $uploaderId = auth()->id();
+        $uploaderId = $user->id;
 
         $document = Document::create([
             'title'             => $validated['title'],
