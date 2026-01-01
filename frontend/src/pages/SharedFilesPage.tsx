@@ -35,6 +35,8 @@ import {
 } from "../features/documents/lib/selection";
 import { useSharedRenameDelete } from "../features/documents/hooks/useSharedRenameDelete";
 import { notify } from "../lib/notify";
+import { useDocumentPreview } from "../features/documents/hooks/useDocumentPreview";
+
 
 type LayoutContext = {
   user: {
@@ -60,6 +62,7 @@ export default function SharedFilesPage() {
   );
 
   const {
+    // state
     folderPath,
     setFolderPath,
     currentFolder,
@@ -76,18 +79,17 @@ export default function SharedFilesPage() {
     searchQuery,
     setSearchQuery,
     debouncedSearch,
+    setDebouncedSearch,
     loading,
     setLoading,
     error,
     setError,
+    searching,
+
     viewMode,
     setViewMode,
     sortMode,
     setSortMode,
-    previewUrl,
-    setPreviewUrl,
-    previewLoading,
-    setPreviewLoading,
     detailsWidth,
     setDetailsWidth,
     sharedUploadOpen,
@@ -143,6 +145,11 @@ export default function SharedFilesPage() {
     loadSharedFolderContents,
   });
 
+    const { previewUrl, previewLoading } = useDocumentPreview({
+      detailsOpen,
+      selectedItem,
+    });
+
   // ---------- helpers ----------
 
   const handleDetailsResizeStart = () => {
@@ -174,7 +181,6 @@ export default function SharedFilesPage() {
   const handleSelectFolder = async (folder: SharedFolder) => {
     setSelectedItem(null);
     setDetailsOpen(false);
-    setPreviewUrl(null);
     setSearchQuery("");
 
     const chain: SharedFolder[] = [];
@@ -198,10 +204,10 @@ export default function SharedFilesPage() {
     setFolderChildren([]);
     setFolderDocs([]);
     setSelectedItem(null);
-    setPreviewUrl(null);
     setSearchQuery("");
     await loadTopLevelShared();
   };
+
 
   const handleDownloadSelected = async () => {
     if (!selectedItem || selectedItem.kind !== "file") return;
@@ -604,13 +610,18 @@ export default function SharedFilesPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <input
-              type="text"
-              placeholder="Search shared files..."
-              className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
+            <div className="flex items-center gap-1">
+              {searching && (
+                <div className="h-5 w-5 animate-spin rounded-full border border-sky-500 border-t-transparent" />
+              )}
+              <input
+                type="text"
+                placeholder="Search shared files..."
+                className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
             <Button
               size="xs"
               variant="secondary"
@@ -630,7 +641,6 @@ export default function SharedFilesPage() {
             onClick={async () => {
               setSelectedItem(null);
               setDetailsOpen(false);
-              setPreviewUrl(null);
 
               if (folderPath.length === 0) {
                 await loadTopLevelShared();
@@ -667,7 +677,6 @@ export default function SharedFilesPage() {
                       setFolderPath(newPath);
                       setSelectedItem(null);
                       setDetailsOpen(false);
-                      setPreviewUrl(null);
                       setSearchQuery("");
                       await loadSharedFolderContents(folder);
                     }}
@@ -687,7 +696,6 @@ export default function SharedFilesPage() {
             onClick={(e) => {
               if (e.target === e.currentTarget) {
                 setSelectedItem(null);
-                setPreviewUrl(null);
               }
             }}
           >
@@ -925,6 +933,8 @@ export default function SharedFilesPage() {
                       : "No shared files."}
                   </p>
                 ) : viewMode === "grid" ? (
+                  // rest of grid/list rendering...
+
                   <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-5">
                     {filteredSortedDocs.map((doc) => {
                       const name = doc.title || doc.original_filename;
@@ -950,7 +960,9 @@ export default function SharedFilesPage() {
                           className="group cursor-pointer"
                           onClick={(e) => {
                             e.preventDefault();
+                            console.log("Selected doc (grid)", doc);
                             setSelectedItem({ kind: "file", data: doc as any });
+                            setDetailsOpen(true);
                           }}
                           onDoubleClick={(e) => {
                             e.preventDefault();
@@ -1002,12 +1014,11 @@ export default function SharedFilesPage() {
                                   Copy
                                 </DropdownMenu.Item>
                                 {(() => {
-                                if (
-                                  !canModifySharedFile(doc, user.id, isAdmin)
-                                ) {
-                                  return null;
-                                }
-
+                                  if (
+                                    !canModifySharedFile(doc, user.id, isAdmin)
+                                  ) {
+                                    return null;
+                                  }
 
                                   return (
                                     <>
@@ -1098,10 +1109,12 @@ export default function SharedFilesPage() {
                             }`}
                             onClick={(e) => {
                               e.preventDefault();
+                              console.log("Selected doc (list)", doc);
                               setSelectedItem({
                                 kind: "file",
                                 data: doc as any,
                               });
+                              setDetailsOpen(true);
                             }}
                             onDoubleClick={(e) => {
                               e.preventDefault();

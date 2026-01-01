@@ -18,10 +18,13 @@ const pathToPageKey = (pathname: string): PageKey => {
       return "users";
     case "/trash":
       return "trash";
+    case "/departments":
+      return "departments";
     default:
       return "overview";
   }
 };
+
 
 function AppLayout() {
   const location = useLocation();
@@ -34,7 +37,9 @@ function AppLayout() {
 
   const roleName = user?.role?.name ?? "";
   const isSuperAdmin = roleName === "Super Admin";
-  const isAdmin = roleName === "Admin";
+  const isDepartmentAdmin = roleName === "Admin";
+  const isAdminOrSuper = isSuperAdmin || isDepartmentAdmin;
+
 
   useEffect(() => {
     setActivePage(pathToPageKey(location.pathname));
@@ -47,9 +52,11 @@ function AppLayout() {
       shared: "/shared",
       users: "/users",
       trash: "/trash",
+      departments: "/departments",
     };
     navigate(pageToPath[page]);
   };
+
 
   const handleLogout = () => {
     window.location.href = "/login";
@@ -75,15 +82,16 @@ function AppLayout() {
         <Sidebar
           activePage={activePage}
           onNavigate={handleNavigate}
-          // Super Admin & Admin can see /users, etc.
-          isAdmin={isSuperAdmin || isAdmin}
+          isAdmin={isAdminOrSuper}
+          isSuperAdmin={isSuperAdmin}
         />
+
         <main className="flex-1 overflow-auto p-6">
           <Outlet
             context={{
               user,
               // For pages that only care about “can see admin things”
-              isAdmin: isSuperAdmin || isAdmin,
+              isAdmin: isAdminOrSuper,
               // If a page wants to know if this is truly global Super Admin:
               isSuperAdmin,
             }}

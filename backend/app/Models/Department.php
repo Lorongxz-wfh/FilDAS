@@ -15,8 +15,12 @@ class Department extends Model
         'name',
         'code',
         'description',
-        'owner_id', // <-- allow mass-assigning owner
+        'owner_id',
+        'logo_path',
+        'theme_color',
+        'is_active',
     ];
+
 
     public function documents()
     {

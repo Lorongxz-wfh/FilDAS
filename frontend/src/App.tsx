@@ -7,6 +7,7 @@ import DocumentManagerPage from "./features/documents/pages/DocumentManagerPage"
 import SharedFilesPage from "./pages/SharedFilesPage";
 import UserManagerPage from "./pages/UserManagerPage";
 // import ReportsPage from "./pages/ReportsPage";
+import DepartmentManagerPage from "./pages/DepartmentManagerPage";
 import { api, setAuthToken } from "./lib/api";
 
 function App() {
@@ -94,6 +95,7 @@ function App() {
             <Route path="/files" element={<DocumentManagerPage />} />
             <Route path="/shared" element={<SharedFilesPage />} />
             <Route path="/users" element={<UserManagerPage />} />
+            <Route path="/departments" element={<DepartmentManagerPage />} />
             {/* <Route path="/reports" element={<ReportsPage />} /> */}
           </Route>
         ) : (

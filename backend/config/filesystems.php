@@ -66,6 +66,14 @@ return [
             'visibility' => 'private',
             'throw' => false,
         ],
+        'fildas_assets' => [
+            'driver'     => 'local',
+            'root'       => storage_path('app/public/fildas_assets'),
+            'url'        => env('APP_URL') . '/storage/fildas_assets',
+            'visibility' => 'public',
+            'throw'      => false,
+        ],
+
 
     ],
 

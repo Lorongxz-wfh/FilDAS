@@ -60,8 +60,9 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
   // ui
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true); // full-page / folder loads
   const [error, setError] = useState<string | null>(null);
+  const [searching, setSearching] = useState(false); // lightweight search spinner
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [sortMode, setSortMode] = useState<SortMode>("recent");
 
@@ -69,10 +70,8 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
 
-  // preview
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
   const [detailsWidth, setDetailsWidth] = useState(320);
+
 
   // modals
   const [sharedUploadOpen, setSharedUploadOpen] = useState(false);
@@ -149,7 +148,6 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
       setFolderDocs([]);
       setFolderPath([]);
       setSelectedItem(null);
-      setPreviewUrl(null);
     } catch (e) {
       console.error(e);
       setError("Failed to load shared files.");
@@ -220,15 +218,17 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
     }
   };
 
-    const searchSharedFolders = async (query: string) => {
+  const searchSharedFolders = async (query: string) => {
     const q = query.trim();
     if (!q) {
       setSearchedFolders(null);
       return;
     }
 
+    setSearching(true);
     try {
       // If inside a folder, search deep under that folder.
+
       const params: any = { q };
       if (currentFolder) {
         params.under_folder_id = currentFolder.id;
@@ -251,23 +251,23 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
       setSearchedFolders(results);
     } catch (e) {
       console.error("Failed to search shared folders", e);
-      // On error, fall back to no search results to avoid breaking UI.
       setSearchedFolders([]);
+    } finally {
+      setSearching(false);
     }
   };
 
-    const searchSharedDocuments = async (query: string) => {
+
+  const searchSharedDocuments = async (query: string) => {
     const q = query.trim();
     if (!q) {
       setSearchedDocs(null);
       return;
     }
 
+    setSearching(true);
     try {
       const params: any = { q };
-
-      // At root: global shared docs search (you already use allSharedDocs).
-      // Inside a folder: deep search under that folder.
       if (currentFolder) {
         params.under_folder_id = currentFolder.id;
       }
@@ -295,9 +295,14 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
       setSearchedDocs(results);
     } catch (e) {
       console.error("Failed to search shared documents", e);
-      setSearchedDocs([]);
+      // Fall back to existing behavior (allSharedDocs / folderDocs).
+      setSearchedDocs(null);
+    } finally {
+
+      setSearching(false);
     }
   };
+
 
 
 
@@ -317,57 +322,25 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
         // Clear search results when query is cleared.
         setSearchedFolders(null);
         setSearchedDocs(null);
-      } else {
-        // Trigger API-based folder search (root or under current folder).
-        searchSharedFolders(trimmed);
-        // Trigger document search (root/global or under current folder).
-        searchSharedDocuments(trimmed);
+        return;
       }
+
+      // Do not hit the API for 1‑character searches.
+      if (trimmed.length < 2) {
+        setSearchedFolders(null);
+        setSearchedDocs(null);
+        return;
+      }
+
+      // Trigger API-based folder search (root or under current folder).
+      searchSharedFolders(trimmed);
+      // Trigger document search (root/global or under current folder).
+      searchSharedDocuments(trimmed);
     }, 300);
 
     return () => clearTimeout(handle);
   }, [searchQuery, currentFolder]);
 
-
-
-  // preview (using /documents/{id}/preview)
-  useEffect(() => {
-    const loadPreview = async () => {
-      if (!detailsOpen || !selectedItem || selectedItem.kind !== "file") {
-        setPreviewUrl(null);
-        setPreviewLoading(false);
-        return;
-      }
-
-      const doc = selectedItem.data as DocumentRow;
-      const mime = doc.mime_type;
-      if (
-        !mime.startsWith("image/") &&
-        mime !== "application/pdf" &&
-        !mime.includes("word") &&
-        !mime.includes("presentation")
-      ) {
-        setPreviewUrl(null);
-        setPreviewLoading(false);
-        return;
-      }
-
-      setPreviewLoading(true);
-      try {
-        const res = await api.get(`/documents/${doc.id}/preview`);
-        const url = res.data.stream_url ?? res.data.streamurl ?? null;
-        setPreviewUrl(url);
-      } catch (e) {
-        console.error("Failed to load preview URL", e);
-        setPreviewUrl(null);
-      } finally {
-        setPreviewLoading(false);
-      }
-
-    };
-
-    loadPreview();
-  }, [detailsOpen, selectedItem]);
 
     // ---------- derived data ----------
 
@@ -492,6 +465,7 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
     setLoading,
     error,
     setError,
+    searching,
     viewMode,
     setViewMode,
     sortMode,
@@ -500,10 +474,6 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
     setSelectedItem,
     detailsOpen,
     setDetailsOpen,
-    previewUrl,
-    setPreviewUrl,
-    previewLoading,
-    setPreviewLoading,
     detailsWidth,
     setDetailsWidth,
     sharedUploadOpen,

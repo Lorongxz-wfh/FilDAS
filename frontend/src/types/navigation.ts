@@ -4,4 +4,5 @@ export type PageKey =
   | "files"
   | "shared"
   | "users"
-  | "trash";
+  | "trash"
+  | "departments";

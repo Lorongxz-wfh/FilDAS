@@ -9,9 +9,13 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('activities', function (Blueprint $table) {
-            $table->string('subject_type')->nullable()->after('user_id');
-            $table->unsignedBigInteger('subject_id')->nullable()->after('subject_type');
-            $table->index(['subject_type', 'subject_id']);
+            if (!Schema::hasColumn('activities', 'subject_type')) {
+                $table->string('subject_type')->nullable()->after('user_id');
+            }
+            if (!Schema::hasColumn('activities', 'subject_id')) {
+                $table->unsignedBigInteger('subject_id')->nullable()->after('subject_type');
+                $table->index(['subject_type', 'subject_id']);
+            }
         });
     }
 

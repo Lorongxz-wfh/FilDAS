@@ -41,8 +41,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::put('/users/{user}', [UserController::class, 'update']);
     Route::delete('/users/{user}', [UserController::class, 'destroy']);
 
+    // Department types (for dropdowns)
+    Route::get('/department-types', [\App\Http\Controllers\DepartmentTypeController::class, 'index']);
+
     // Departments
     Route::get('/departments', [DepartmentController::class, 'index']);
+    Route::post('/departments/{department}/logo', [DepartmentController::class, 'uploadLogo']);
     Route::post('/departments', [DepartmentController::class, 'store']);
     Route::get('/departments/{department}', [DepartmentController::class, 'show']);
     Route::put('/departments/{department}', [DepartmentController::class, 'update']);

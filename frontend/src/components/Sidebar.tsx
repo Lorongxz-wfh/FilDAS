@@ -6,12 +6,16 @@ type SidebarProps = {
   activePage: PageKey;
   onNavigate: (page: PageKey) => void;
   isAdmin: boolean;
+  isSuperAdmin: boolean;
 };
+
+
 
 export default function Sidebar({
   activePage,
   onNavigate,
   isAdmin,
+  isSuperAdmin,
 }: SidebarProps) {
   const itemVariant = (active: boolean) =>
     active ? "primary" : ("ghost" as const);
@@ -41,14 +45,16 @@ export default function Sidebar({
           Document Manager
         </Button>
 
-        <Button
-          variant={itemVariant(activePage === "shared")}
-          size="sm"
-          className="w-full justify-start"
-          onClick={() => onNavigate("shared")}
-        >
-          Shared Files
-        </Button>
+        {isSuperAdmin && (
+          <Button
+            variant={itemVariant(activePage === "departments")}
+            size="sm"
+            className="w-full justify-start"
+            onClick={() => onNavigate("departments")}
+          >
+            Departments
+          </Button>
+        )}
 
         {isAdmin && (
           <>
