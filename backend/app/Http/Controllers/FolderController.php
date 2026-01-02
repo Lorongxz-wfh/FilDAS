@@ -76,7 +76,15 @@ class FolderController extends Controller
 
 
         // Log on the folder itself
-        ActivityLogger::log($folder, 'created', 'Folder created via form');
+        $location = $folder->parent_id
+            ? 'subfolder of "' . ($folder->parent?->name ?? 'Unknown') . '"'
+            : 'department "' . ($folder->department?->name ?? 'Unknown') . '"';
+
+        ActivityLogger::log(
+            $folder,
+            'created',
+            'Folder "' . $folder->name . '" created in ' . $location
+        );
 
         // Also log on parent folder, if any
         if ($folder->parent_id) {
@@ -120,9 +128,29 @@ class FolderController extends Controller
             return response()->json(['error' => 'Forbidden'], 403);
         }
 
+        $originalName = $folder->name;
+        $originalDescription = $folder->description;
+
         $folder->update($validated);
 
-        ActivityLogger::log($folder, 'updated', 'Name or description changed');
+        $parts = [];
+
+        if (array_key_exists('name', $validated) && $validated['name'] !== $originalName) {
+            $parts[] = sprintf(
+                'Name: "%s" → "%s"',
+                $originalName ?? '',
+                $validated['name'] ?? ''
+            );
+        }
+
+        if (array_key_exists('description', $validated) && $validated['description'] !== $originalDescription) {
+            $parts[] = 'Description changed';
+        }
+
+        $details = $parts ? implode('; ', $parts) : 'Folder updated';
+
+        ActivityLogger::log($folder, 'updated', $details);
+
 
         return response()->json([
             'message' => 'Folder updated',
@@ -352,10 +380,9 @@ class FolderController extends Controller
         });
 
         $details = $targetFolder
-            ? "Moved to folder: {$targetFolder->name}"
+            ? 'Moved to folder "' . $targetFolder->name . '"'
             : 'Moved to department root';
 
-        // log on the folder itself
         ActivityLogger::log($folder, 'updated', $details);
 
         // log on the new parent folder, if any

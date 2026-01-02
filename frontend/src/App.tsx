@@ -9,6 +9,8 @@ import UserManagerPage from "./pages/UserManagerPage";
 // import ReportsPage from "./pages/ReportsPage";
 import DepartmentManagerPage from "./pages/DepartmentManagerPage";
 import { api, setAuthToken } from "./lib/api";
+import AuditLogsPage from "./pages/AuditLogsPage";
+
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -97,6 +99,7 @@ function App() {
             <Route path="/users" element={<UserManagerPage />} />
             <Route path="/departments" element={<DepartmentManagerPage />} />
             {/* <Route path="/reports" element={<ReportsPage />} /> */}
+            <Route path="/audit-logs" element={<AuditLogsPage />} />
           </Route>
         ) : (
           <Route path="/overview" element={<Navigate to="/login" replace />} />

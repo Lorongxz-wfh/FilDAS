@@ -8,6 +8,9 @@ use App\Models\Document;
 use App\Models\Folder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use App\Helpers\ActivityLogger;
+use App\Notifications\ItemSharedNotification;
+
 
 class ShareController extends Controller
 {
@@ -172,8 +175,30 @@ class ShareController extends Controller
         // LOG ACTIVITY
         $item = $share->document_id ? Document::find($share->document_id) : Folder::find($share->folder_id);
         if ($item) {
-            \App\Helpers\ActivityLogger::log($item, 'shared', 'Shared with ' . $targetUser->email);
+            $targetLabel = $targetUser->name
+                ? $targetUser->name . ' <' . $targetUser->email . '>'
+                : $targetUser->email;
+
+            ActivityLogger::log(
+                $item,
+                'shared',
+                'Shared with ' . $targetLabel . ' as ' . $share->permission
+            );
         }
+
+        // NOTIFY TARGET USER
+        $itemType = $share->document_id ? 'document' : 'folder';
+        $itemName = $share->document_id
+            ? ($item?->title ?: $item?->original_filename ?: 'Untitled document')
+            : ($item?->name ?: 'Untitled folder');
+
+        $targetUser->notify(new ItemSharedNotification(
+            $itemType,
+            $itemName,
+            $share->permission,
+            $owner->name ?? 'Someone',
+            $item?->id
+        ));
 
         return response()->json($share->load(['owner', 'targetUser']), 201);
     }
@@ -586,6 +611,19 @@ class ShareController extends Controller
         $share->permission = $data['permission'];
         $share->save();
 
+        $item = $share->document_id ? Document::find($share->document_id) : Folder::find($share->folder_id);
+        if ($item) {
+            $target = $share->targetUser?->email ?? ('User #' . $share->target_user_id);
+
+            ActivityLogger::log(
+                $item,
+                'share_permission_changed',
+                'Share permission for ' . $target . ' set to ' . $share->permission
+            );
+        }
+
+
+
         $share->loadMissing(['owner', 'targetUser']);
 
         return response()->json($share);
@@ -603,6 +641,18 @@ class ShareController extends Controller
         }
 
         $share->delete();
+
+        $item = $share->document_id ? Document::find($share->document_id) : Folder::find($share->folder_id);
+        if ($item) {
+            $target = $share->targetUser?->email ?? ('User #' . $share->target_user_id);
+
+            ActivityLogger::log(
+                $item,
+                'unshared',
+                'Access removed for ' . $target
+            );
+        }
+
 
         return response()->json(['message' => 'Share removed']);
     }

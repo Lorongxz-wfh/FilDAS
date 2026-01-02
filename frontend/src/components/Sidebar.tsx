@@ -9,8 +9,6 @@ type SidebarProps = {
   isSuperAdmin: boolean;
 };
 
-
-
 export default function Sidebar({
   activePage,
   onNavigate,
@@ -65,7 +63,7 @@ export default function Sidebar({
           </Button>
         )}
 
-        {isAdmin && (
+        {isSuperAdmin && (
           <>
             <Button
               variant={itemVariant(activePage === "users")}
@@ -83,6 +81,15 @@ export default function Sidebar({
               onClick={() => onNavigate("trash")}
             >
               Archive / Trash
+            </Button>
+
+            <Button
+              variant={itemVariant(activePage === "audit-logs")}
+              size="sm"
+              className="w-full justify-start"
+              onClick={() => onNavigate("audit-logs")}
+            >
+              Audit Logs
             </Button>
           </>
         )}

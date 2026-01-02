@@ -32,7 +32,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
         return $request->user()->load(['role', 'department']);
     });
 
-    Route::post('/logout', [AuthController::class, 'logout']);
+    // Audit logs (super admin / admin only)
+    Route::get('/audit-logs', [\App\Http\Controllers\Api\AuditLogController::class, 'index']);
 
     // Users
     Route::get('/users', [UserController::class, 'index']);
@@ -40,6 +41,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::get('/users/{user}', [UserController::class, 'show']);
     Route::put('/users/{user}', [UserController::class, 'update']);
     Route::delete('/users/{user}', [UserController::class, 'destroy']);
+
+    Route::post('/logout', [AuthController::class, 'logout']);
 
     // Department types (for dropdowns)
     Route::get('/department-types', [\App\Http\Controllers\DepartmentTypeController::class, 'index']);
@@ -52,6 +55,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::put('/departments/{department}', [DepartmentController::class, 'update']);
     Route::patch('/departments/{department}', [DepartmentController::class, 'update']);
     Route::delete('/departments/{department}', [DepartmentController::class, 'destroy']);
+    Route::get('/departments/{department}/activity', [DepartmentController::class, 'activity']);
+
 
     // Folders
     Route::get('/folders', [FolderController::class, 'index']);
@@ -102,4 +107,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/shares', [ShareController::class, 'store']);
     Route::patch('/shares/{share}', [ShareController::class, 'update']);
     Route::delete('/shares/{share}', [ShareController::class, 'destroy']);
+
+
+    Route::get('/notifications', [\App\Http\Controllers\NotificationController::class, 'index']);
+    Route::post('/notifications/{id}/read', [\App\Http\Controllers\NotificationController::class, 'markAsRead']);
+    Route::post('/notifications/read-all', [\App\Http\Controllers\NotificationController::class, 'markAllAsRead']);
 });

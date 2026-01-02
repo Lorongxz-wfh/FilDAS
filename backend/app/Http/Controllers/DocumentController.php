@@ -151,17 +151,27 @@ class DocumentController extends Controller
         ]);
 
 
+        $docLabel = $document->title ?: $document->original_filename;
+        $location = $document->folder_id
+            ? 'folder "' . ($parentFolder->name ?? 'Unknown') . '"'
+            : 'department "' . ($document->department?->name ?? 'Unknown') . '"';
+
         // Log on the document itself
-        ActivityLogger::log($document, 'uploaded');
+        ActivityLogger::log(
+            $document,
+            'uploaded',
+            'Uploaded document "' . $docLabel . '" to ' . $location
+        );
 
         // Also log on parent folder if the document is inside one
         if ($document->folder_id && ($parentFolder = Folder::find($document->folder_id))) {
             ActivityLogger::log(
                 $parentFolder,
                 'updated',
-                'Uploaded document: ' . ($document->title ?: $document->original_filename)
+                'Document uploaded here: "' . $docLabel . '"'
             );
         }
+
 
         return response()->json(
             $document->load(['folder', 'uploadedBy', 'owner']),
@@ -201,9 +211,29 @@ class DocumentController extends Controller
             return response()->json(['error' => 'Forbidden'], 403);
         }
 
+        $originalTitle = $document->title;
+        $originalDescription = $document->description;
+
         $document->update($validated);
 
-        ActivityLogger::log($document, 'updated', 'Title or description changed');
+        $parts = [];
+
+        if (array_key_exists('title', $validated) && $validated['title'] !== $originalTitle) {
+            $parts[] = sprintf(
+                'Title: "%s" → "%s"',
+                $originalTitle ?? '',
+                $validated['title'] ?? ''
+            );
+        }
+
+        if (array_key_exists('description', $validated) && $validated['description'] !== $originalDescription) {
+            $parts[] = 'Description changed';
+        }
+
+        $details = $parts ? implode('; ', $parts) : 'Document updated';
+
+        ActivityLogger::log($document, 'updated', $details);
+
 
         return response()->json($document->load(['folder', 'uploadedBy', 'owner']));
     }
@@ -352,6 +382,12 @@ class DocumentController extends Controller
 
     public function preview(Document $document)
     {
+        ActivityLogger::log(
+            $document,
+            'viewed',
+            'Document preview requested'
+        );
+
         return response()->json([
             'id'                => $document->id,
             'title'             => $document->title,
@@ -526,10 +562,11 @@ class DocumentController extends Controller
         $document->save();
 
         $details = $targetFolder
-            ? "Moved to folder: {$targetFolder->name}"
-            : "Moved to department root";
+            ? 'Moved to folder "' . $targetFolder->name . '"'
+            : 'Moved to department root';
 
         ActivityLogger::log($document, 'updated', $details);
+
         if ($targetFolder) {
             ActivityLogger::log(
                 $targetFolder,

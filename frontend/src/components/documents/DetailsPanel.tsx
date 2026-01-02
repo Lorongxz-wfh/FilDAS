@@ -61,13 +61,12 @@ export function DetailsPanel({
   onResizeStart,
 }: Props) {
   const [shareModalOpen, setShareModalOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<"details" | "activity">("details");
+  const [activeTab, setActiveTab] = useState<
+    "details" | "activity" | "sharing"
+  >("details");
   const [shares, setShares] = useState<ShareRecord[]>([]);
   const [sharesError, setSharesError] = useState<string | null>(null);
   const [sharesLoading, setSharesLoading] = useState(false);
-
-  const [activities, setActivities] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!open || !selectedItem) {
@@ -77,6 +76,7 @@ export function DetailsPanel({
       return;
     }
 
+    // Departments don't have direct shares
     if (selectedItem.kind === "department") {
       setShares([]);
       setSharesError(null);
@@ -143,6 +143,16 @@ export function DetailsPanel({
             >
               Activity
             </button>
+            <button
+              className={
+                activeTab === "sharing"
+                  ? "border-b border-sky-500 pb-1 text-slate-100"
+                  : "pb-1 text-slate-400 hover:text-slate-200"
+              }
+              onClick={() => setActiveTab("sharing")}
+            >
+              Sharing
+            </button>
           </div>
           <IconButton size="xs" variant="ghost" onClick={onClose}>
             ✕
@@ -161,28 +171,27 @@ export function DetailsPanel({
                 previewUrl={previewUrl}
                 previewLoading={previewLoading}
                 formatSize={formatSize}
-                onOpenShare={() => setShareModalOpen(true)}
-                canEditAccess={canEditAccess}
-                shares={shares}
-                sharesError={sharesError}
-                sharesLoading={sharesLoading}
                 onDescriptionSaved={onAccessChanged}
               />
             ) : isFolder ? (
               <FolderDetails
                 folder={selectedItem.data as FolderRow}
-                onOpenShare={() => setShareModalOpen(true)}
-                canEditAccess={canEditAccess}
-                shares={shares}
-                sharesError={sharesError}
-                sharesLoading={sharesLoading}
                 onDescriptionSaved={onAccessChanged}
               />
             ) : (
               <DepartmentDetails selectedItem={selectedItem} />
             )
-          ) : (
+          ) : activeTab === "activity" ? (
             <ActivityPlaceholder selectedItem={selectedItem} />
+          ) : (
+            <SharingTab
+              selectedItem={selectedItem}
+              canEditAccess={canEditAccess}
+              onOpenShare={() => setShareModalOpen(true)}
+              shares={shares}
+              sharesError={sharesError}
+              sharesLoading={sharesLoading}
+            />
           )}
         </div>
 
@@ -207,11 +216,6 @@ type FileDetailsProps = {
   previewUrl: string | null;
   previewLoading: boolean;
   formatSize: (bytes: number) => string;
-  onOpenShare: () => void;
-  canEditAccess: boolean;
-  shares: ShareRecord[];
-  sharesError: string | null;
-  sharesLoading: boolean;
   onDescriptionSaved?: () => void | Promise<void>;
 };
 
@@ -220,11 +224,6 @@ function FileDetails({
   previewUrl,
   previewLoading,
   formatSize,
-  onOpenShare,
-  canEditAccess,
-  shares,
-  sharesError,
-  sharesLoading,
   onDescriptionSaved,
 }: FileDetailsProps) {
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
@@ -329,14 +328,12 @@ function FileDetails({
                 <span className="text-slate-500">No description.</span>
               )}
             </p>
-            {canEditAccess && (
-              <button
-                className="text-[11px] text-sky-400 hover:text-sky-300"
-                onClick={() => setEditingDescription(true)}
-              >
-                Edit
-              </button>
-            )}
+            <button
+              className="text-[11px] text-sky-400 hover:text-sky-300"
+              onClick={() => setEditingDescription(true)}
+            >
+              Edit
+            </button>
           </div>
         )}
       </div>
@@ -385,25 +382,6 @@ function FileDetails({
         )}
       </div>
 
-      <div className="border-t border-slate-800 pt-2">
-        <p className="mb-1 text-[11px] font-semibold uppercase text-slate-400">
-          Access
-        </p>
-        {canEditAccess && (
-          <button
-            className="mb-3 rounded-md border border-slate-700 px-2 py-1 text-[11px] text-white hover:bg-slate-800"
-            onClick={onOpenShare}
-          >
-            Share…
-          </button>
-        )}
-        <PeopleWithAccess
-          shares={shares}
-          error={sharesError}
-          loading={sharesLoading}
-        />
-      </div>
-
       <Modal
         open={previewModalOpen}
         title={doc.title || doc.original_filename || "Preview"}
@@ -429,23 +407,10 @@ function FileDetails({
 
 type FolderDetailsProps = {
   folder: FolderRow;
-  onOpenShare: () => void;
-  canEditAccess: boolean;
-  shares: ShareRecord[];
-  sharesError: string | null;
-  sharesLoading: boolean;
   onDescriptionSaved?: () => void | Promise<void>;
 };
 
-function FolderDetails({
-  folder,
-  onOpenShare,
-  canEditAccess,
-  shares,
-  sharesError,
-  sharesLoading,
-  onDescriptionSaved,
-}: FolderDetailsProps) {
+function FolderDetails({ folder, onDescriptionSaved }: FolderDetailsProps) {
   const [editingDescription, setEditingDescription] = useState(false);
   const [description, setDescription] = useState(
     (folder as any).description || ""
@@ -516,14 +481,12 @@ function FolderDetails({
                 <span className="text-slate-500">No description.</span>
               )}
             </p>
-            {canEditAccess && (
-              <button
-                className="text-[11px] text-sky-400 hover:text-sky-300"
-                onClick={() => setEditingDescription(true)}
-              >
-                Edit
-              </button>
-            )}
+            <button
+              className="text-[11px] text-sky-400 hover:text-sky-300"
+              onClick={() => setEditingDescription(true)}
+            >
+              Edit
+            </button>
           </div>
         )}
       </div>
@@ -555,25 +518,6 @@ function FolderDetails({
           </div>
         )}
       </div>
-
-      <div className="border-t border-slate-800 pt-2">
-        <p className="mb-1 text-[11px] font-semibold uppercase text-slate-400">
-          Access
-        </p>
-        {canEditAccess && (
-          <button
-            className="mb-3 rounded-md border border-slate-700 px-2 py-1 text-[11px] text-white hover:bg-slate-800"
-            onClick={onOpenShare}
-          >
-            Share…
-          </button>
-        )}
-        <PeopleWithAccess
-          shares={shares}
-          error={sharesError}
-          loading={sharesLoading}
-        />
-      </div>
     </>
   );
 }
@@ -602,31 +546,29 @@ function ActivityPlaceholder({ selectedItem }: { selectedItem: Item }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (selectedItem.kind === "department") {
-      setActivities([]);
-      return;
-    }
-
     const fetchActivities = async () => {
       setLoading(true);
       setError(null);
 
-      const type = selectedItem.kind === "file" ? "documents" : "folders";
-      const id = (selectedItem.data as any).id;
-
       try {
-        const res = await api.get(`/${type}/${id}/activity`);
+        let url: string;
 
-        // BEFORE:
-        // const data = res.data.data ?? res.data;
+        if (selectedItem.kind === "department") {
+          const id = (selectedItem.data as any).id;
+          url = `/departments/${id}/activity`;
+        } else {
+          const type = selectedItem.kind === "file" ? "documents" : "folders";
+          const id = (selectedItem.data as any).id;
+          url = `/${type}/${id}/activity`;
+        }
 
-        // AFTER: controller already returns a raw array
+        const res = await api.get(url);
         const data = res.data as any[];
-
         setActivities(data);
       } catch (e) {
         console.error(e);
         setError("Failed to load activity");
+        setActivities([]);
       } finally {
         setLoading(false);
       }
@@ -635,24 +577,13 @@ function ActivityPlaceholder({ selectedItem }: { selectedItem: Item }) {
     fetchActivities();
   }, [selectedItem]);
 
-  const label =
-    selectedItem.kind === "file"
-      ? "This file"
-      : selectedItem.kind === "folder"
-      ? "This folder"
-      : "This department";
-
   return (
     <div className="text-xs">
       <p className="mb-2 text-[11px] font-semibold uppercase text-slate-400">
         Activity
       </p>
 
-      {selectedItem.kind === "department" ? (
-        <p className="text-[11px] text-slate-500">
-          Departments don't have activity logs. Select a file or folder.
-        </p>
-      ) : loading ? (
+      {loading ? (
         <div className="flex items-center justify-center py-4">
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
         </div>
@@ -689,6 +620,55 @@ function ActivityPlaceholder({ selectedItem }: { selectedItem: Item }) {
           })}
         </ul>
       )}
+    </div>
+  );
+}
+
+// ========== SHARING TAB ==========
+
+function SharingTab({
+  selectedItem,
+  canEditAccess,
+  onOpenShare,
+  shares,
+  sharesError,
+  sharesLoading,
+}: {
+  selectedItem: Item;
+  canEditAccess: boolean;
+  onOpenShare: () => void;
+  shares: ShareRecord[];
+  sharesError: string | null;
+  sharesLoading: boolean;
+}) {
+  if (selectedItem.kind === "department") {
+    return (
+      <p className="text-[11px] text-slate-500">
+        Sharing is managed at the folder and file level. Select a folder or
+        file.
+      </p>
+    );
+  }
+
+  return (
+    <div className="text-xs">
+      <p className="mb-1 text-[11px] font-semibold uppercase text-slate-400">
+        Sharing
+      </p>
+      {canEditAccess && (
+        <button
+          className="mb-3 rounded-md border border-slate-700 px-2 py-1 text-[11px] text-white hover:bg-slate-800"
+          onClick={onOpenShare}
+        >
+          Share…
+        </button>
+      )}
+
+      <PeopleWithAccess
+        shares={shares}
+        error={sharesError}
+        loading={sharesLoading}
+      />
     </div>
   );
 }

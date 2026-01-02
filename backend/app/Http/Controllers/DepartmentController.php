@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\Department;
+use App\Models\Activity;
+use App\Helpers\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 
@@ -37,6 +39,13 @@ class DepartmentController extends Controller
 
         $department = Department::create($validated);
 
+        // AUDIT
+        ActivityLogger::log(
+            $department,
+            'created',
+            'Department created: ' . $department->name
+        );
+
         return response()->json(['department' => $department], 201);
     }
 
@@ -68,6 +77,13 @@ class DepartmentController extends Controller
 
         $department->update($validated);
 
+        // AUDIT
+        ActivityLogger::log(
+            $department,
+            'updated',
+            'Department updated: ' . $department->name
+        );
+
         return response()->json(['department' => $department]);
     }
 
@@ -91,6 +107,13 @@ class DepartmentController extends Controller
         $department->logo_path = $path;
         $department->save();
 
+        // AUDIT
+        ActivityLogger::log(
+            $department,
+            'updated',
+            'Department logo updated'
+        );
+
         return response()->json([
             'department' => $department->fresh(['owner', 'type']),
         ]);
@@ -101,7 +124,41 @@ class DepartmentController extends Controller
     public function destroy($id)
     {
         $department = Department::findOrFail($id);
+        $name = $department->name;
+
         $department->delete();
+
+        // AUDIT
+        ActivityLogger::log(
+            $department,
+            'deleted',
+            'Department deleted: ' . $name
+        );
+
         return response()->json(['message' => 'Department deleted']);
+    }
+
+    public function activity(Department $department)
+    {
+        $activities = Activity::where('subject_type', Department::class)
+            ->where('subject_id', $department->id)
+            ->with('user:id,name,email')
+            ->orderBy('created_at', 'desc')
+            ->get()
+            ->map(function (Activity $a) {
+                return [
+                    'id'         => $a->id,
+                    'action'     => $a->action,
+                    'details'    => $a->details,
+                    'created_at' => $a->created_at,
+                    'user'       => $a->user ? [
+                        'id'    => $a->user->id,
+                        'name'  => $a->user->name,
+                        'email' => $a->user->email,
+                    ] : null,
+                ];
+            });
+
+        return response()->json($activities);
     }
 }

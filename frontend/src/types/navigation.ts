@@ -3,6 +3,7 @@ export type PageKey =
   | "overview"
   | "files"
   | "shared"
+  | "departments"
   | "users"
   | "trash"
-  | "departments";
+  | "audit-logs";

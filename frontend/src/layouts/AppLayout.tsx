@@ -20,6 +20,8 @@ const pathToPageKey = (pathname: string): PageKey => {
       return "trash";
     case "/departments":
       return "departments";
+    case "/audit-logs":
+      return "audit-logs";
     default:
       return "overview";
   }
@@ -45,17 +47,19 @@ function AppLayout() {
     setActivePage(pathToPageKey(location.pathname));
   }, [location.pathname]);
 
-  const handleNavigate = (page: PageKey) => {
-    const pageToPath: Record<PageKey, string> = {
-      overview: "/overview",
-      files: "/files",
-      shared: "/shared",
-      users: "/users",
-      trash: "/trash",
-      departments: "/departments",
-    };
-    navigate(pageToPath[page]);
+const handleNavigate = (page: PageKey) => {
+  const pageToPath: Record<PageKey, string> = {
+    overview: "/overview",
+    files: "/files",
+    shared: "/shared",
+    users: "/users",
+    trash: "/trash",
+    departments: "/departments",
+    "audit-logs": "/audit-logs",
   };
+  navigate(pageToPath[page]);
+};
+
 
 
   const handleLogout = () => {

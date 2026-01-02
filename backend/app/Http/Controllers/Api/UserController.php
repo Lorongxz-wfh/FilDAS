@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Helpers\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 
@@ -78,7 +79,15 @@ class UserController extends Controller
         // Load the role relationship
         $user->load('role');
 
+        // AUDIT
+        ActivityLogger::log(
+            $user, // subject
+            'created',
+            'User created with email ' . $user->email
+        );
+
         return response()->json([
+
             'id'              => $user->id,
             'name'            => $user->name,
             'email'           => $user->email,
@@ -160,7 +169,15 @@ class UserController extends Controller
         // Reload the role relationship
         $user->load('role');
 
+        // AUDIT
+        ActivityLogger::log(
+            $user,
+            'updated',
+            'User updated: ' . implode(', ', array_keys($data))
+        );
+
         return response()->json([
+
             'id' => $user->id,
             'name' => $user->name,
             'email' => $user->email,
@@ -179,7 +196,17 @@ class UserController extends Controller
     {
         $this->ensureAdmin($request);
 
+        $userName = $user->name;
+        $userId   = $user->id;
+
         $user->delete();
+
+        // AUDIT
+        ActivityLogger::log(
+            $user,
+            'deleted',
+            'User deleted: ' . $userName . ' (ID ' . $userId . ')'
+        );
 
         return response()->json(null, 204);
     }
