@@ -7,6 +7,7 @@ import { Button } from "../../../components/ui/Button";
 
 import { useDocumentPreview } from "../hooks/useDocumentPreview";
 import { useDocumentNavigation } from "../hooks/useDocumentNavigation";
+import { usePolling } from "../hooks/usePolling";
 import { applySort, computeVisibleItems } from "../../../lib/documentsSorting";
 import { formatSize } from "../lib/formatSize";
 import { useResizableDetails } from "../hooks/useResizableDetails";
@@ -87,6 +88,9 @@ export default function DocumentManagerPage() {
 
   console.log("doc manager folders sample", folders.slice(0, 10));
 
+  // When true, auto-polling is paused to avoid overlapping with mutations.
+  const [isBusy, setIsBusy] = useState(false);
+
   const {
     selectedItem,
     setSelectedItem,
@@ -110,6 +114,7 @@ export default function DocumentManagerPage() {
     setDepartments,
     setFolders,
     setDocuments,
+    onBusyChange: setIsBusy,
   });
 
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -191,6 +196,7 @@ export default function DocumentManagerPage() {
   const moveSelected = async (targetFolderId: number | null) => {
     if (!selectedItem || !currentDepartment) return;
 
+    setIsBusy(true);
     try {
       if (selectedItem.kind === "folder") {
         const folder = selectedItem.data as FolderRow;
@@ -214,12 +220,15 @@ export default function DocumentManagerPage() {
     } catch (e) {
       console.error(e);
       notify("Failed to move item.", "error");
+    } finally {
+      setIsBusy(false);
     }
   };
 
   const copySelected = async (targetFolderId: number | null) => {
     if (!selectedItem || !currentDepartment) return;
 
+    setIsBusy(true);
     try {
       if (selectedItem.kind === "folder") {
         const folder = selectedItem.data as FolderRow;
@@ -243,6 +252,8 @@ export default function DocumentManagerPage() {
     } catch (e) {
       console.error(e);
       notify("Failed to copy item.", "error");
+    } finally {
+      setIsBusy(false);
     }
   };
 
@@ -308,6 +319,7 @@ export default function DocumentManagerPage() {
     }
     setCreatingFolder(true);
     setFolderError(null);
+    setIsBusy(true);
     try {
       const payload: any = {
         name: newFolderName.trim(),
@@ -326,6 +338,7 @@ export default function DocumentManagerPage() {
       notify("Failed to create folder.", "error");
     } finally {
       setCreatingFolder(false);
+      setIsBusy(false);
     }
   };
 
@@ -340,6 +353,7 @@ export default function DocumentManagerPage() {
       await loadDepartmentContents(currentDepartment);
     } else if (isSuperAdmin) {
       // For super admin at root, just reload departments list
+      setIsBusy(true);
       try {
         const res = await api.get("/departments");
         const deptItems: Department[] = res.data.data ?? res.data;
@@ -350,6 +364,25 @@ export default function DocumentManagerPage() {
       }
     }
   };
+
+  // Auto-refresh current view every 45 seconds when inside a department or folder.
+  usePolling(
+    () => {
+      if (loading || isBusy) return;
+
+      if (currentFolder) {
+        loadFolderContents(currentFolder);
+      } else if (currentDepartment) {
+        loadDepartmentContents(currentDepartment);
+      }
+      // When at departments root, do not auto-poll to avoid extra load.
+    },
+    {
+      intervalMs: 45_000,
+      enabled: (!!currentDepartment || !!currentFolder) && !isBusy,
+      pauseWhenHidden: true,
+    }
+  );
 
   const toolbarLabel =
     selectedItem == null
@@ -687,13 +720,18 @@ export default function DocumentManagerPage() {
         currentFolderId={currentFolder?.id ?? null}
         onClose={() => setUploadOpen(false)}
         onSuccess={async () => {
-          if (currentFolder) {
-            await loadFolderContents(currentFolder);
-          } else if (currentDepartment) {
-            await loadDepartmentContents(currentDepartment);
+          setIsBusy(true);
+          try {
+            if (currentFolder) {
+              await loadFolderContents(currentFolder);
+            } else if (currentDepartment) {
+              await loadDepartmentContents(currentDepartment);
+            }
+            notify("Upload completed.", "success");
+          } finally {
+            setUploadOpen(false);
+            setIsBusy(false);
           }
-          setUploadOpen(false);
-          notify("Upload completed.", "success");
         }}
       />
 

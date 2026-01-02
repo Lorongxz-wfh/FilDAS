@@ -1,4 +1,5 @@
 // src/pages/SharedFilesPage.tsx
+import { useState } from "react";
 import { api } from "../lib/api";
 import { useOutletContext } from "react-router-dom";
 import { Button } from "../components/ui/Button";
@@ -22,6 +23,7 @@ import type {
   DocumentRow,
   SharedFolder,
 } from "../features/documents/hooks/useSharedFiles";
+import { usePolling } from "../features/documents/hooks/usePolling";
 import {
   isSelectedItem,
   canModifySharedFolder,
@@ -45,6 +47,9 @@ export default function SharedFilesPage() {
   // ---------- context / hooks ----------
 
   const { user, isAdmin } = useOutletContext<LayoutContext>();
+
+  // When true, auto-polling is paused to avoid overlapping with shared mutations.
+  const [isBusy, setIsBusy] = useState(false);
 
   const { folders: deptFolders, loading: deptLoading } = useDepartmentTree(
     user.department_id ?? null
@@ -124,38 +129,39 @@ export default function SharedFilesPage() {
     isAdmin,
   });
 
-const {
-  canRenameSelected,
-  canDeleteSelected,
-  canMoveSelected,
-  sharedRenameOpen,
-  setSharedRenameOpen,
-  sharedRenameName,
-  setSharedRenameName,
-  sharedRenaming,
-  sharedRenameError,
-  setSharedRenameError,
-  getSharedItemName,
-  handleSharedRenameSubmit,
-  handleSharedDeleteSelected,
-} = useSharedRenameDelete({
-  // selection comes from useSharedFiles
-  selectedItem,
-  setSelectedItem,
-  detailsOpen,
-  setDetailsOpen,
+  const {
+    canRenameSelected,
+    canDeleteSelected,
+    canMoveSelected,
+    sharedRenameOpen,
+    setSharedRenameOpen,
+    sharedRenameName,
+    setSharedRenameName,
+    sharedRenaming,
+    sharedRenameError,
+    setSharedRenameError,
+    getSharedItemName,
+    handleSharedRenameSubmit,
+    handleSharedDeleteSelected,
+  } = useSharedRenameDelete({
+    // selection comes from useSharedFiles
+    selectedItem,
+    setSelectedItem,
+    detailsOpen,
+    setDetailsOpen,
 
-  setAllSharedDocs,
-  setDocuments,
-  setFolderDocs,
-  setFolders,
-  setFolderChildren,
-  currentFolder,
-  loadTopLevelShared,
-  loadSharedFolderContents,
-  userId: user.id,
-  isAdmin,
-});
+    setAllSharedDocs,
+    setDocuments,
+    setFolderDocs,
+    setFolders,
+    setFolderChildren,
+    currentFolder,
+    loadTopLevelShared,
+    loadSharedFolderContents,
+    userId: user.id,
+    isAdmin,
+    onBusyChange: setIsBusy,
+  });
 
 
   const { previewUrl, previewLoading } = useDocumentPreview({
@@ -273,6 +279,7 @@ const {
     }
     setSharedCreatingFolder(true);
     setSharedFolderError(null);
+    setIsBusy(true);
     try {
       const res = await api.post("/folders", {
         name: sharedNewFolderName.trim(),
@@ -303,6 +310,8 @@ const {
         err.response?.data?.message || "Failed to create folder.",
         "error"
       );
+    } finally {
+      setIsBusy(false);
     }
   };
 
@@ -314,6 +323,7 @@ const {
     });
     if (!selectedItem || !sharedPendingAction) return;
 
+    setIsBusy(true);
     try {
       if (selectedItem.kind === "file") {
         const doc = selectedItem.data as DocumentRow;
@@ -368,6 +378,8 @@ const {
           "error"
         );
       }
+    } finally {
+      setIsBusy(false);
     }
   };
 
@@ -384,6 +396,26 @@ const {
 
   // shared folders + currently loaded children for the move/copy modal
   const sharedFoldersForModal: SharedFolder[] = [...folders, ...folderChildren];
+
+  usePolling(
+    () => {
+      if (loading || isBusy) return;
+
+      if (currentFolder) {
+        loadSharedFolderContents(currentFolder);
+      } else {
+        loadTopLevelShared();
+      }
+    },
+    {
+      intervalMs: 45_000,
+      enabled:
+        !isBusy &&
+        (!searchQuery || searchQuery.trim() === "") &&
+        (!!currentFolder || folderPath.length === 0),
+      pauseWhenHidden: true,
+    }
+  );
 
   // ---------- UI ----------
 
@@ -1099,10 +1131,18 @@ const {
         currentFolderId={currentFolder?.id ?? null}
         onClose={() => setSharedUploadOpen(false)}
         onSuccess={async () => {
-          if (currentFolder) await loadSharedFolderContents(currentFolder);
-          else await loadTopLevelShared();
-          setSharedUploadOpen(false);
-          notify("Upload completed.", "success");
+          setIsBusy(true);
+          try {
+            if (currentFolder) {
+              await loadSharedFolderContents(currentFolder);
+            } else {
+              await loadTopLevelShared();
+            }
+            notify("Upload completed.", "success");
+          } finally {
+            setSharedUploadOpen(false);
+            setIsBusy(false);
+          }
         }}
       />
       <NewFolderModal

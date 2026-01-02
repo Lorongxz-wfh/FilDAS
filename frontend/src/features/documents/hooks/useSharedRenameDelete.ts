@@ -30,6 +30,9 @@ type Params = {
 
   userId: number;
   isAdmin: boolean;
+
+  // Optional: notify parent when rename/delete is in progress.
+  onBusyChange?: (busy: boolean) => void;
 };
 
 
@@ -45,6 +48,7 @@ export function useSharedRenameDelete(params: Params) {
     loadSharedFolderContents,
     userId,
     isAdmin,
+    onBusyChange,
   } = params;
 
 
@@ -95,6 +99,7 @@ export function useSharedRenameDelete(params: Params) {
 
     setSharedRenaming(true);
     setSharedRenameError(null);
+    onBusyChange?.(true);
 
     try {
       if (selectedItem.kind === "file") {
@@ -164,6 +169,7 @@ export function useSharedRenameDelete(params: Params) {
       }
     } finally {
       setSharedRenaming(false);
+      onBusyChange?.(false);
     }
 
 
@@ -173,6 +179,8 @@ export function useSharedRenameDelete(params: Params) {
   const handleSharedDeleteSelected = async () => {
     if (!selectedItem) return;
     if (!window.confirm(`Delete this ${selectedItem.kind}?`)) return;
+
+    onBusyChange?.(true);
     try {
       if (selectedItem.kind === "file") {
         const doc = selectedItem.data as DocumentRow;
@@ -188,10 +196,7 @@ export function useSharedRenameDelete(params: Params) {
       }
       setSelectedItem(null);
       setDetailsOpen(false);
-      setSelectedItem(null);
-      setDetailsOpen(false);
       notify("Item deleted.", "success");
-
     } catch (err: any) {
       console.error(err);
 
@@ -215,10 +220,12 @@ export function useSharedRenameDelete(params: Params) {
           await loadTopLevelShared();
         }
       } else {
-
         notify(message, "error");
       }
+    } finally {
+      onBusyChange?.(false);
     }
+
 
 
   };

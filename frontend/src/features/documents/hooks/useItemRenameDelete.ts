@@ -18,6 +18,8 @@ type Params = {
   setDepartments: React.Dispatch<React.SetStateAction<Department[]>>;
   setFolders: React.Dispatch<React.SetStateAction<FolderRow[]>>;
   setDocuments: React.Dispatch<React.SetStateAction<DocumentRow[]>>;
+  // Optional: notify parent when a rename/delete mutation is in progress.
+  onBusyChange?: (busy: boolean) => void;
 };
 
 export function useItemRenameDelete(params: Params) {
@@ -29,6 +31,7 @@ export function useItemRenameDelete(params: Params) {
     setDepartments,
     setFolders,
     setDocuments,
+    onBusyChange,
   } = params;
 
   const [renameOpen, setRenameOpen] = useState(false);
@@ -59,6 +62,7 @@ export function useItemRenameDelete(params: Params) {
 
     setRenaming(true);
     setRenameError(null);
+    onBusyChange?.(true);
 
     try {
       if (selectedItem.kind === "file") {
@@ -120,6 +124,7 @@ export function useItemRenameDelete(params: Params) {
       }
     } finally {
       setRenaming(false);
+      onBusyChange?.(false);
     }
 
   };
@@ -129,6 +134,7 @@ export function useItemRenameDelete(params: Params) {
 
     if (!window.confirm(`Move this ${selectedItem.kind} to trash?`)) return;
 
+    onBusyChange?.(true);
     try {
       if (selectedItem.kind === "file") {
         const doc = selectedItem.data as DocumentRow;
@@ -147,7 +153,9 @@ export function useItemRenameDelete(params: Params) {
         await api.delete(`/departments/${dept.id}`);
         setDepartments((prev) => prev.filter((d) => d.id !== dept.id));
         setFolders((prev) => prev.filter((f) => f.department_id !== dept.id));
-        setDocuments((prev) => prev.filter((d) => d.department_id !== dept.id));
+        setDocuments((prev) =>
+          prev.filter((d) => d.department_id !== dept.id)
+        );
         if (currentDepartment && currentDepartment.id === dept.id) {
           setCurrentDepartment(null);
           setCurrentFolder(null);
@@ -172,7 +180,10 @@ export function useItemRenameDelete(params: Params) {
       } else {
         notify(message, "error");
       }
+    } finally {
+      onBusyChange?.(false);
     }
+
 
 
   };
