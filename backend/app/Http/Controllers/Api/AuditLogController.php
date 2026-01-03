@@ -21,7 +21,11 @@ class AuditLogController extends Controller
     {
         $this->ensureAdmin($request);
 
-        $query = Activity::with('user');
+        $user    = $request->user();
+        $isSuper = method_exists($user, 'isSuperAdmin') ? $user->isSuperAdmin() : false;
+        $isAdmin = method_exists($user, 'isAdmin') ? $user->isAdmin() : false;
+
+        $query = Activity::with(['user', 'department']);
 
         // Optional filters: user_id, subject_type, action, date_from, date_to
         if ($request->filled('user_id')) {
@@ -44,24 +48,41 @@ class AuditLogController extends Controller
             $query->whereDate('created_at', '<=', $request->input('date_to'));
         }
 
+        // Department scoping.
+        if ($isSuper) {
+            if ($request->filled('department_id')) {
+                // Only apply this filter if the column exists in the table.
+                $query->where('department_id', $request->integer('department_id'));
+            }
+        } elseif ($isAdmin) {
+            // Admin always restricted to their own department if set.
+            if (!empty($user->department_id)) {
+                $query->where('department_id', $user->department_id);
+            } else {
+                // No department_id on this admin; show nothing instead of error.
+                $query->whereRaw('1 = 0');
+            }
+        }
+
         $perPage = min($request->integer('per_page', 25), 100);
 
         $logs = $query
             ->orderBy('created_at', 'desc')
             ->paginate($perPage);
 
-        // Normalize payload for frontend
         return response()->json([
             'data' => $logs->getCollection()->map(function (Activity $a) {
                 return [
-                    'id'           => $a->id,
-                    'user_id'      => $a->user_id,
-                    'user_name'    => $a->user?->name,
-                    'subject_type' => $a->subject_type,
-                    'subject_id'   => $a->subject_id,
-                    'action'       => $a->action,
-                    'details'      => $a->details,
-                    'created_at'   => $a->created_at,
+                    'id'              => $a->id,
+                    'user_id'         => $a->user_id,
+                    'user_name'       => $a->user?->name,
+                    'department_id'   => $a->department_id,
+                    'department_name' => $a->department?->name,
+                    'subject_type'    => $a->subject_type,
+                    'subject_id'      => $a->subject_id,
+                    'action'          => $a->action,
+                    'details'         => $a->details,
+                    'created_at'      => $a->created_at,
                 ];
             }),
             'meta' => [

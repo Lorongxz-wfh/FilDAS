@@ -118,9 +118,9 @@ export default function TopNav({ onLogout }: TopNavProps) {
       if (notif.type === "ItemSharedNotification") {
         navigate("/shared");
       } else if (notif.type === "ItemUpdatedNotification") {
-        navigate("/files");
+        navigate("/documents");
       } else {
-        navigate("/overview");
+        navigate("/dashboard");
       }
     } catch (err) {
       console.error("Failed to mark notification as read", err);
@@ -304,7 +304,7 @@ export default function TopNav({ onLogout }: TopNavProps) {
           </Button>
 
           {open && (
-            <div className="absolute right-0 top-8 mt-1 w-40 rounded-md border border-slate-700 bg-slate-900 text-xs shadow-lg z-20">
+            <div className="absolute right-0 top-8 mt-1 w-44 rounded-md border border-slate-700 bg-slate-900 text-xs shadow-lg z-20">
               <Button
                 variant="ghost"
                 size="xs"
@@ -314,6 +314,19 @@ export default function TopNav({ onLogout }: TopNavProps) {
                   ? `${currentUserName} • ${currentUserRole}`
                   : "User info / Settings"}
               </Button>
+
+              <Button
+                variant="ghost"
+                size="xs"
+                className="w-full justify-start rounded-none px-3 py-2"
+                onClick={() => {
+                  setOpen(false);
+                  navigate("/archive");
+                }}
+              >
+                Archive
+              </Button>
+
               <Button
                 variant="ghost"
                 size="xs"

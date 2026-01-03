@@ -22,11 +22,11 @@ class UserSeeder extends Seeder
 
         // Staff in QA
         User::create([
-            'name'          => 'QA Admin User',
-            'email'         => 'qa@example.com',
+            'name'          => 'CCS Admin User',
+            'email'         => 'ccs.admin@example.com',
             'password'      => Hash::make('password'),
-            'role_id'       => 2, // Staff
-            'department_id' => 1, // QA
+            'role_id'       => 2, // Admin
+            'department_id' => 2, // QA
             'status'        => 'active',
         ]);
 

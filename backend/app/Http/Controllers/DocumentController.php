@@ -71,8 +71,6 @@ class DocumentController extends Controller
     {
         $user = $request->user();
 
-        // Only admins or super admins can see all archived items.
-        // Regular users only see archived items they own or uploaded.
         $query = Document::with(['folder', 'uploadedBy', 'owner'])
             ->archived();
 
@@ -91,10 +89,24 @@ class DocumentController extends Controller
             });
         }
 
-        // Permission model:
-        // - SuperAdmin / Admin: see any archived document.
-        // - Others: only archived docs they own or uploaded.
-        if (!$user->isAdmin() && !$user->isSuperAdmin()) {
+        // Visibility:
+        // - Super Admin: all archived documents.
+        // - Admin: archived documents in their own department.
+        // - Staff: archived documents they own or uploaded.
+        $roleName     = $user->role->name ?? '';
+        $isSuperAdmin = $roleName === 'Super Admin';
+        $isAdmin      = $roleName === 'Admin';
+
+        if ($isSuperAdmin) {
+            // no extra filter
+        } elseif ($isAdmin) {
+            if ($user->department_id) {
+                $query->where('department_id', $user->department_id);
+            } else {
+                // admin without department sees nothing
+                $query->whereRaw('1 = 0');
+            }
+        } else {
             $query->where(function ($q) use ($user) {
                 $q->where('owner_id', $user->id)
                     ->orWhere('uploaded_by', $user->id);

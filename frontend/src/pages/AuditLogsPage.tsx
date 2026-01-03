@@ -2,11 +2,14 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { Button } from "../components/ui/Button";
+import type { Department } from "../types/documents";
 
 type AuditLogRow = {
   id: number;
   user_id: number | null;
   user_name: string | null;
+  department_id: number | null;
+  department_name: string | null;
   subject_type: string | null;
   subject_id: number | null;
   action: string;
@@ -66,10 +69,11 @@ import { useOutletContext } from "react-router-dom";
 
 type LayoutContext = {
   isSuperAdmin: boolean;
+  isAdmin: boolean;
 };
 
 export default function AuditLogsPage() {
-  const { isSuperAdmin } = useOutletContext<LayoutContext>();
+  const { isSuperAdmin, isAdmin } = useOutletContext<LayoutContext>();
 
   const [logs, setLogs] = useState<AuditLogRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -82,6 +86,10 @@ export default function AuditLogsPage() {
   const [action, setAction] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [departmentId, setDepartmentId] = useState("");
+
+  // departments for Super Admin filter
+  const [departments, setDepartments] = useState<Department[]>([]);
 
   // pagination
   const [page, setPage] = useState(1);
@@ -89,7 +97,7 @@ export default function AuditLogsPage() {
   const [total, setTotal] = useState(0);
   const [lastPage, setLastPage] = useState(1);
 
-  if (!isSuperAdmin) {
+  if (!isSuperAdmin && !isAdmin) {
     return (
       <div className="p-4 text-sm text-rose-400">
         You do not have permission to view audit logs.
@@ -109,6 +117,8 @@ export default function AuditLogsPage() {
           action: action || undefined,
           date_from: dateFrom || undefined,
           date_to: dateTo || undefined,
+          // Super Admin can optionally filter by department; for Admin this is ignored/overridden by backend
+          department_id: isSuperAdmin ? departmentId || undefined : undefined,
           per_page: perPage,
           page,
         },
@@ -129,6 +139,30 @@ export default function AuditLogsPage() {
     loadLogs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page]);
+
+  // Load departments for Super Admin so filter can show names instead of raw IDs
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+
+    const loadDepartments = async () => {
+      try {
+        const res = await api.get<any>("/departments");
+
+        // Handle either array or { data: [...] } shape
+        const items = Array.isArray(res.data)
+          ? res.data
+          : Array.isArray(res.data?.data)
+          ? res.data.data
+          : [];
+
+        setDepartments(items as Department[]);
+      } catch (e) {
+        console.error("Failed to load departments for audit filter", e);
+      }
+    };
+
+    loadDepartments();
+  }, [isSuperAdmin]);
 
   useEffect(() => {
     // When filters change, reset to first page and reload after a short delay
@@ -153,6 +187,7 @@ export default function AuditLogsPage() {
     setAction("");
     setDateFrom("");
     setDateTo("");
+    setDepartmentId("");
     setPage(1);
     loadLogs();
   };
@@ -175,10 +210,30 @@ export default function AuditLogsPage() {
               placeholder="e.g. 5"
             />
           </div>
+          {isSuperAdmin && (
+            <div className="flex flex-col">
+              <label className="mb-1 text-[11px] text-slate-400">
+                Department
+              </label>
+              <select
+                className="w-44 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+                value={departmentId}
+                onChange={(e) => setDepartmentId(e.target.value)}
+              >
+                <option value="">All departments</option>
+                {Array.isArray(departments) &&
+                  departments.map((dept) => (
+                    <option key={dept.id} value={dept.id}>
+                      {dept.name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          )}
 
           <div className="flex flex-col">
             <label className="mb-1 text-[11px] text-slate-400">
-              Subject type
+                Type
             </label>
             <select
               className="w-44 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
@@ -267,6 +322,7 @@ export default function AuditLogsPage() {
               <tr>
                 <th className="py-2 pr-3">Date</th>
                 <th className="py-2 pr-3">User</th>
+                <th className="py-2 pr-3">Department</th>
                 <th className="py-2 pr-3">Action</th>
                 <th className="py-2 pr-3">Subject</th>
                 <th className="py-2 pr-3">Details</th>
@@ -303,6 +359,12 @@ export default function AuditLogsPage() {
                     </td>
                     <td className="py-1.5 pr-3 text-slate-200">
                       {log.user_name ?? `User #${log.user_id ?? "-"}`}
+                    </td>
+                    <td className="py-1.5 pr-3 text-slate-200">
+                      {log.department_name ??
+                        (log.department_id
+                          ? `Dept #${log.department_id}`
+                          : "—")}
                     </td>
                     <td className="py-1.5 pr-3 text-sky-300">{log.action}</td>
                     <td className="py-1.5 pr-3 text-slate-300">

@@ -72,10 +72,24 @@ class FolderController extends Controller
             $query->where('parent_id', $request->parent_id);
         }
 
-        // Permission model:
-        // - SuperAdmin / Admin: see all archived folders.
-        // - Others: only folders they own.
-        if (!$user->isAdmin() && !$user->isSuperAdmin()) {
+        // Visibility:
+        // - Super Admin: all archived folders.
+        // - Admin: archived folders in their own department.
+        // - Staff: only archived folders they own.
+        $roleName     = $user->role->name ?? '';
+        $isSuperAdmin = $roleName === 'Super Admin';
+        $isAdmin      = $roleName === 'Admin';
+
+        if ($isSuperAdmin) {
+            // no extra filter
+        } elseif ($isAdmin) {
+            if ($user->department_id) {
+                $query->where('department_id', $user->department_id);
+            } else {
+                // admin without department sees nothing
+                $query->whereRaw('1 = 0');
+            }
+        } else {
             $query->where('owner_id', $user->id);
         }
 
@@ -85,7 +99,6 @@ class FolderController extends Controller
 
         return response()->json($folders);
     }
-
 
     public function store(Request $request)
     {

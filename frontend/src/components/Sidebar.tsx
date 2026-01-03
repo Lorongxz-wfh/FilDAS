@@ -18,13 +18,16 @@ export default function Sidebar({
   const itemVariant = (active: boolean) =>
     active ? "primary" : ("ghost" as const);
 
+  const roleLabel = isSuperAdmin ? "Super Admin" : isAdmin ? "Admin" : "Staff";
+
   return (
     <aside className="flex h-full w-60 flex-col border-r border-slate-800 bg-slate-950/60 px-3 py-4">
       <p className="mb-3 px-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-        {isAdmin ? "Admin" : "Staff"}
+        {roleLabel}
       </p>
 
       <nav className="space-y-1">
+        {/* Common pages for all authenticated users */}
         <Button
           variant={itemVariant(activePage === "dashboard")}
           size="sm"
@@ -40,7 +43,7 @@ export default function Sidebar({
           className="w-full justify-start"
           onClick={() => onNavigate("documents")}
         >
-          Document Manager
+          Documents
         </Button>
 
         <Button
@@ -52,19 +55,18 @@ export default function Sidebar({
           Shared Files
         </Button>
 
-        {isSuperAdmin && (
-          <Button
-            variant={itemVariant(activePage === "departments")}
-            size="sm"
-            className="w-full justify-start"
-            onClick={() => onNavigate("departments")}
-          >
-            Departments
-          </Button>
-        )}
-
+        {/* Super Admin only */}
         {isSuperAdmin && (
           <>
+            <Button
+              variant={itemVariant(activePage === "departments")}
+              size="sm"
+              className="w-full justify-start"
+              onClick={() => onNavigate("departments")}
+            >
+              Departments
+            </Button>
+
             <Button
               variant={itemVariant(activePage === "users")}
               size="sm"
@@ -75,12 +77,27 @@ export default function Sidebar({
             </Button>
 
             <Button
-              variant={itemVariant(activePage === "archive")}
+              variant={itemVariant(activePage === "audit-logs")}
               size="sm"
               className="w-full justify-start"
-              onClick={() => onNavigate("archive")}
+              onClick={() => onNavigate("audit-logs")}
             >
-              Archive
+              Audit Logs
+            </Button>
+          </>
+        )}
+
+        {/* Department Admin (Admin but not Super Admin):
+            Can manage users and view audit logs scoped to their department. */}
+        {!isSuperAdmin && isAdmin && (
+          <>
+            <Button
+              variant={itemVariant(activePage === "users")}
+              size="sm"
+              className="w-full justify-start"
+              onClick={() => onNavigate("users")}
+            >
+              User Manager
             </Button>
 
             <Button
