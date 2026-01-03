@@ -163,7 +163,6 @@ export default function SharedFilesPage() {
     onBusyChange: setIsBusy,
   });
 
-
   const { previewUrl, previewLoading } = useDocumentPreview({
     detailsOpen,
     selectedItem,
@@ -268,6 +267,64 @@ export default function SharedFilesPage() {
     } catch (e) {
       console.error(e);
       notify("Failed to download folder.", "error");
+    }
+  };
+
+  // Archive selected shared item if allowed (editor/owner on original)
+  const handleSharedArchiveSelected = async () => {
+    if (!selectedItem) return;
+
+    if (!canDeleteSelected) {
+      notify(
+        "You do not have permission to archive this shared item.",
+        "error"
+      );
+      return;
+    }
+
+    const label =
+      selectedItem.kind === "file"
+        ? "this file"
+        : "this folder (and its contents)";
+
+    if (
+      !window.confirm(
+        `Archive ${label}? It will be hidden from normal views but kept in the Archive.`
+      )
+    ) {
+      return;
+    }
+
+    setIsBusy(true);
+    try {
+      if (selectedItem.kind === "file") {
+        const doc = selectedItem.data as DocumentRow;
+        await api.post(`/documents/${doc.id}/archive`);
+      } else if (selectedItem.kind === "folder") {
+        const folder = selectedItem.data as SharedFolder;
+        await api.post(`/folders/${folder.id}/archive`);
+      } else {
+        return;
+      }
+
+      if (currentFolder) {
+        await loadSharedFolderContents(currentFolder);
+      } else {
+        await loadTopLevelShared();
+      }
+
+      setSelectedItem(null);
+      setDetailsOpen(false);
+      notify("Item archived.", "success");
+    } catch (e: any) {
+      console.error(e);
+      const msg =
+        e?.response?.data?.error ||
+        e?.response?.data?.message ||
+        "Failed to archive item.";
+      notify(msg, "error");
+    } finally {
+      setIsBusy(false);
     }
   };
 
@@ -513,9 +570,18 @@ export default function SharedFilesPage() {
                     )}
 
                     {canDeleteSelected && (
-                      <Button size="xs" onClick={handleSharedDeleteSelected}>
-                        Delete
-                      </Button>
+                      <>
+                        <Button size="xs" onClick={handleSharedArchiveSelected}>
+                          Archive
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="secondary"
+                          onClick={handleSharedDeleteSelected}
+                        >
+                          Delete
+                        </Button>
+                      </>
                     )}
                   </>
                 )}
@@ -800,10 +866,10 @@ export default function SharedFilesPage() {
                                               kind: "folder",
                                               data: folder as any,
                                             });
-                                            handleSharedDeleteSelected();
+                                            handleSharedArchiveSelected();
                                           }}
                                         >
-                                          Delete
+                                          Archive
                                         </DropdownMenu.Item>
                                       </>
                                     );
@@ -1018,10 +1084,10 @@ export default function SharedFilesPage() {
                                             kind: "file",
                                             data: doc as any,
                                           });
-                                          handleSharedDeleteSelected();
+                                          handleSharedArchiveSelected();
                                         }}
                                       >
-                                        Delete
+                                        Archive
                                       </DropdownMenu.Item>
                                     </>
                                   );

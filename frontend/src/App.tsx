@@ -10,6 +10,10 @@ import UserManagerPage from "./pages/UserManagerPage";
 import DepartmentManagerPage from "./pages/DepartmentManagerPage";
 import { api, setAuthToken } from "./lib/api";
 import AuditLogsPage from "./pages/AuditLogsPage";
+import NotificationsPage from "./pages/NotificationsPage";
+import ArchivePage from "./features/documents/pages/ArchivePage";
+
+
 
 
 function App() {
@@ -83,7 +87,7 @@ function App() {
           path="/login"
           element={
             isAuthenticated ? (
-              <Navigate to="/overview" replace />
+              <Navigate to="/dashboard" replace />
             ) : (
               <LoginPage onLoginSuccess={handleLoginSuccess} />
             )
@@ -93,16 +97,18 @@ function App() {
         {/* Protected app routes */}
         {isAuthenticated ? (
           <Route element={<AppLayout />}>
-            <Route path="/overview" element={<DashboardPage />} />
-            <Route path="/files" element={<DocumentManagerPage />} />
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/documents" element={<DocumentManagerPage />} />
             <Route path="/shared" element={<SharedFilesPage />} />
             <Route path="/users" element={<UserManagerPage />} />
             <Route path="/departments" element={<DepartmentManagerPage />} />
+            <Route path="/archive" element={<ArchivePage />} />
             {/* <Route path="/reports" element={<ReportsPage />} /> */}
             <Route path="/audit-logs" element={<AuditLogsPage />} />
+            <Route path="/notifications" element={<NotificationsPage />} />
           </Route>
         ) : (
-          <Route path="/overview" element={<Navigate to="/login" replace />} />
+          <Route path="/dashboard" element={<Navigate to="/login" replace />} />
         )}
 
         {/* Root redirect */}
@@ -110,7 +116,7 @@ function App() {
           path="/"
           element={
             isAuthenticated ? (
-              <Navigate to="/overview" replace />
+              <Navigate to="/dashboard" replace />
             ) : (
               <Navigate to="/login" replace />
             )

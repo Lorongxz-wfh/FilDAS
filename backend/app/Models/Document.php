@@ -30,6 +30,7 @@ class Document extends Model
     protected $casts = [
         'uploaded_at' => 'datetime',
         'size_bytes'  => 'integer',
+        'archived_at' => 'datetime',
     ];
 
     protected $appends = ['file_size_formatted'];
@@ -72,6 +73,18 @@ class Document extends Model
     public function activities(): MorphMany
     {
         return $this->morphMany(Activity::class, 'subject');
+    }
+
+    // Only non-archived documents
+    public function scopeNotArchived($query)
+    {
+        return $query->whereNull('archived_at');
+    }
+
+    // Only archived documents
+    public function scopeArchived($query)
+    {
+        return $query->whereNotNull('archived_at');
     }
 
     // in App\Models\Document

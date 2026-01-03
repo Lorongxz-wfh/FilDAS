@@ -1,9 +1,9 @@
 // src/types/navigation.ts
 export type PageKey =
-  | "overview"
-  | "files"
+  | "dashboard"
+  | "documents"
   | "shared"
   | "departments"
   | "users"
-  | "trash"
+  | "archive"
   | "audit-logs";

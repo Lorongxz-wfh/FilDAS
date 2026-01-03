@@ -103,7 +103,7 @@ export function DocumentList({
                         onDelete(item);
                       }}
                     >
-                      Delete
+                      Archive
                     </DropdownMenu.Item>
                   </DropdownMenu>
                 </td>

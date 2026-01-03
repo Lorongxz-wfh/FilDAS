@@ -50,4 +50,20 @@ class Folder extends Model
     {
         return $this->morphMany(Activity::class, 'subject');
     }
+
+    // Only non-archived folders
+    public function scopeNotArchived($query)
+    {
+        return $query->whereNull('archived_at');
+    }
+
+    // Only archived folders
+    public function scopeArchived($query)
+    {
+        return $query->whereNotNull('archived_at');
+    }
+
+    protected $casts = [
+        'archived_at' => 'datetime',
+    ];
 }

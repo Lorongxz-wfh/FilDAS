@@ -10,6 +10,10 @@ use App\Helpers\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
+use App\Notifications\ItemUpdatedNotification;
+use Illuminate\Support\Facades\Auth;
+
+
 
 
 class DocumentController extends Controller
@@ -17,7 +21,8 @@ class DocumentController extends Controller
     public function index(Request $request)
     {
         $user  = $request->user();
-        $query = Document::with(['folder', 'uploadedBy', 'owner']);
+        $query = Document::with(['folder', 'uploadedBy', 'owner'])
+            ->notArchived(); // exclude archived docs by default
 
         if ($request->has('department_id')) {
             $query->where('department_id', $request->department_id);
@@ -59,6 +64,49 @@ class DocumentController extends Controller
         $query->orderBy($sortBy, $sortOrder);
 
         $documents = $query->paginate($request->get('per_page', 15));
+        return response()->json($documents);
+    }
+
+    public function archiveIndex(Request $request)
+    {
+        $user = $request->user();
+
+        // Only admins or super admins can see all archived items.
+        // Regular users only see archived items they own or uploaded.
+        $query = Document::with(['folder', 'uploadedBy', 'owner'])
+            ->archived();
+
+        if ($request->has('department_id')) {
+            $query->where('department_id', $request->department_id);
+        }
+        if ($request->has('folder_id')) {
+            $query->where('folder_id', $request->folder_id);
+        }
+        if ($request->has('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('title', 'like', "%{$search}%")
+                    ->orWhere('description', 'like', "%{$search}%")
+                    ->orWhere('original_filename', 'like', "%{$search}%");
+            });
+        }
+
+        // Permission model:
+        // - SuperAdmin / Admin: see any archived document.
+        // - Others: only archived docs they own or uploaded.
+        if (!$user->isAdmin() && !$user->isSuperAdmin()) {
+            $query->where(function ($q) use ($user) {
+                $q->where('owner_id', $user->id)
+                    ->orWhere('uploaded_by', $user->id);
+            });
+        }
+
+        $sortBy    = $request->get('sort_by', 'uploaded_at');
+        $sortOrder = $request->get('sort_order', 'desc');
+        $query->orderBy($sortBy, $sortOrder);
+
+        $documents = $query->paginate($request->get('per_page', 15));
+
         return response()->json($documents);
     }
 
@@ -232,12 +280,108 @@ class DocumentController extends Controller
 
         $details = $parts ? implode('; ', $parts) : 'Document updated';
 
-        ActivityLogger::log($document, 'updated', $details);
+        // LOG ACTIVITY with explicit user_id
+        ActivityLogger::log($document, 'updated', $details, $user->id);
 
+        // NOTIFY OWNER IF SOMEONE ELSE UPDATED
+        $owner = $document->owner ?? $document->uploadedBy ?? null;
+
+        if ($owner && $owner->id !== $user->id) {
+            $itemType   = 'document';
+            $itemName   = $document->title ?? $document->original_filename ?? 'Untitled document';
+
+            // You can refine this later based on $parts, for now just 'updated'
+            $changeType = 'updated';
+
+            $owner->notify(new ItemUpdatedNotification(
+                $itemType,
+                $itemName,
+                $changeType,
+                $user->name ?? 'Someone',
+                $document->id
+            ));
+        }
 
         return response()->json($document->load(['folder', 'uploadedBy', 'owner']));
     }
 
+    public function archive(Request $request, Document $document)
+    {
+        $user = $request->user();
+
+        $effectivePerm = $this->getEffectivePermissionForUser($document, $user);
+        $isOwner =
+            (int) $document->owner_id === (int) $user->id ||
+            (int) $document->uploaded_by === (int) $user->id;
+
+        // Viewers cannot archive
+        if ($effectivePerm === 'viewer') {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        // Contributors can only archive their own documents
+        if ($effectivePerm === 'contributor' && !$isOwner) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        // Already archived => no-op
+        if ($document->archived_at) {
+            return response()->json(['message' => 'Already archived'], 200);
+        }
+
+        $document->archived_at = now();
+        $document->save();
+
+        ActivityLogger::log(
+            $document,
+            'archived',
+            'Document archived',
+            $user->id
+        );
+
+        return response()->json([
+            'message'  => 'Document archived',
+            'document' => $document->fresh(['folder', 'uploadedBy', 'owner']),
+        ]);
+    }
+
+    public function restore(Request $request, Document $document)
+    {
+        $user = $request->user();
+
+        $effectivePerm = $this->getEffectivePermissionForUser($document, $user);
+        $isOwner =
+            (int) $document->owner_id === (int) $user->id ||
+            (int) $document->uploaded_by === (int) $user->id;
+
+        // Same permissions as archive/delete
+        if ($effectivePerm === 'viewer') {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        if ($effectivePerm === 'contributor' && !$isOwner) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        if (!$document->archived_at) {
+            return response()->json(['message' => 'Not archived'], 200);
+        }
+
+        $document->archived_at = null;
+        $document->save();
+
+        ActivityLogger::log(
+            $document,
+            'restored',
+            'Document restored from archive',
+            $user->id
+        );
+
+        return response()->json([
+            'message'  => 'Document restored',
+            'document' => $document->fresh(['folder', 'uploadedBy', 'owner']),
+        ]);
+    }
 
     public function destroy(Request $request, Document $document)
     {
@@ -284,6 +428,11 @@ class DocumentController extends Controller
 
     public function stream(Document $document)
     {
+        // Do not allow streaming archived documents
+        if ($document->archived_at) {
+            abort(403, 'Document is archived');
+        }
+
         $disk = Storage::disk('fildas_docs');
         $path = $document->file_path;
 
@@ -382,11 +531,14 @@ class DocumentController extends Controller
 
     public function preview(Document $document)
     {
-        ActivityLogger::log(
-            $document,
-            'viewed',
-            'Document preview requested'
-        );
+        // Only log if a user is authenticated, and use the 3-argument form
+        if (Auth::check()) {
+            ActivityLogger::log(
+                $document,
+                'viewed',
+                'Document preview requested'
+            );
+        }
 
         return response()->json([
             'id'                => $document->id,
@@ -403,6 +555,11 @@ class DocumentController extends Controller
 
     public function download(Document $document)
     {
+        // Do not allow downloading archived documents from normal flows
+        if ($document->archived_at) {
+            abort(403, 'Document is archived');
+        }
+
         $disk = Storage::disk('fildas_docs');
         $path = $document->file_path;
 
@@ -419,13 +576,17 @@ class DocumentController extends Controller
 
     public function statistics()
     {
+        $baseQuery = Document::whereNull('archived_at');
+
         $stats = [
-            'total_documents'   => Document::count(),
-            'total_size'        => Document::sum('size_bytes'),
-            'documents_by_type' => Document::selectRaw('mime_type, COUNT(*) as count')
+            'total_documents'   => (clone $baseQuery)->count(),
+            'total_size'        => (clone $baseQuery)->sum('size_bytes'),
+            'documents_by_type' => (clone $baseQuery)
+                ->selectRaw('mime_type, COUNT(*) as count')
                 ->groupBy('mime_type')
                 ->get(),
-            'recent_uploads' => Document::with('uploadedBy')
+            'recent_uploads' => (clone $baseQuery)
+                ->with('uploadedBy')
                 ->latest()
                 ->take(5)
                 ->get(),
@@ -547,13 +708,6 @@ class DocumentController extends Controller
         if (!$isSuper && !$isSharedEditor && $newDeptId !== $document->department_id) {
             return response()->json(['error' => 'Forbidden'], 403);
         }
-
-
-
-
-
-
-
 
         $document->folder_id = $targetFolder?->id;
         if ($isSuper) {

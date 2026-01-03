@@ -193,6 +193,60 @@ export default function DocumentManagerPage() {
     }
   };
 
+  // Archive selected file/folder (soft archive, not delete)
+  const handleArchiveSelected = async () => {
+    if (!selectedItem) return;
+
+    const label =
+      selectedItem.kind === "file"
+        ? "this file"
+        : selectedItem.kind === "folder"
+        ? "this folder (and its contents)"
+        : "this item";
+
+    if (
+      !window.confirm(
+        `Archive ${label}? It will be hidden from normal views but kept in the Archive.`
+      )
+    ) {
+      return;
+    }
+
+    setIsBusy(true);
+    try {
+      if (selectedItem.kind === "file") {
+        const doc = selectedItem.data as DocumentRow;
+        await api.post(`/documents/${doc.id}/archive`);
+      } else if (selectedItem.kind === "folder") {
+        const folder = selectedItem.data as FolderRow;
+        await api.post(`/folders/${folder.id}/archive`);
+      } else {
+        // departments are not archivable here; ignore
+        return;
+      }
+
+      // Reload current context so the archived item disappears
+      if (currentFolder) {
+        await loadFolderContents(currentFolder);
+      } else if (currentDepartment) {
+        await loadDepartmentContents(currentDepartment);
+      }
+
+      setSelectedItem(null);
+      setDetailsOpen(false);
+      notify("Item archived.", "success");
+    } catch (e: any) {
+      console.error(e);
+      const msg =
+        e?.response?.data?.error ||
+        e?.response?.data?.message ||
+        "Failed to archive item.";
+      notify(msg, "error");
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
   const moveSelected = async (targetFolderId: number | null) => {
     if (!selectedItem || !currentDepartment) return;
 
@@ -491,8 +545,8 @@ export default function DocumentManagerPage() {
                 Move
               </Button>
 
-              <Button size="xs" onClick={handleDeleteSelected}>
-                Delete
+              <Button size="xs" onClick={handleArchiveSelected}>
+                Archive
               </Button>
             </>
           )}
@@ -675,7 +729,7 @@ export default function DocumentManagerPage() {
                 }}
                 onDelete={(item) => {
                   setSelectedItem(item);
-                  handleDeleteSelected();
+                  handleArchiveSelected();
                 }}
               />
             ) : (
@@ -694,7 +748,7 @@ export default function DocumentManagerPage() {
                 }}
                 onDelete={(item) => {
                   setSelectedItem(item);
-                  handleDeleteSelected();
+                  handleArchiveSelected();
                 }}
               />
             )}

@@ -12,13 +12,16 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use ZipArchive;
+use App\Notifications\ItemUpdatedNotification;
+
 
 class FolderController extends Controller
 {
     public function index(Request $request)
     {
         $user  = $request->user();
-        $query = Folder::query();
+        $query = Folder::query()
+            ->notArchived(); // exclude archived folders by default
 
         if ($request->filled('department_id')) {
             $query->where('department_id', $request->department_id);
@@ -53,6 +56,36 @@ class FolderController extends Controller
 
         return response()->json($folders);
     }
+
+    public function archiveIndex(Request $request)
+    {
+        $user = $request->user();
+
+        $query = Folder::with(['department', 'owner'])
+            ->archived();
+
+        if ($request->filled('department_id')) {
+            $query->where('department_id', $request->department_id);
+        }
+
+        if ($request->filled('parent_id')) {
+            $query->where('parent_id', $request->parent_id);
+        }
+
+        // Permission model:
+        // - SuperAdmin / Admin: see all archived folders.
+        // - Others: only folders they own.
+        if (!$user->isAdmin() && !$user->isSuperAdmin()) {
+            $query->where('owner_id', $user->id);
+        }
+
+        $query->orderBy('name');
+
+        $folders = $query->paginate($request->get('per_page', 25));
+
+        return response()->json($folders);
+    }
+
 
     public function store(Request $request)
     {
@@ -149,8 +182,25 @@ class FolderController extends Controller
 
         $details = $parts ? implode('; ', $parts) : 'Folder updated';
 
-        ActivityLogger::log($folder, 'updated', $details);
+        // LOG ACTIVITY with explicit user_id
+        ActivityLogger::log($folder, 'updated', $details, $user->id);
 
+        // NOTIFY OWNER IF SOMEONE ELSE UPDATED
+        $owner = $folder->owner ?? null;
+
+        if ($owner && $owner->id !== $user->id) {
+            $itemType   = 'folder';
+            $itemName   = $folder->name ?? 'Untitled folder';
+            $changeType = 'updated'; // later: refine based on $parts, e.g. "renamed"
+
+            $owner->notify(new ItemUpdatedNotification(
+                $itemType,
+                $itemName,
+                $changeType,
+                $user->name ?? 'Someone',
+                $folder->id
+            ));
+        }
 
         return response()->json([
             'message' => 'Folder updated',
@@ -158,6 +208,73 @@ class FolderController extends Controller
         ]);
     }
 
+    public function archive(Request $request, Folder $folder)
+    {
+        $user = $request->user();
+
+        $isSuper  = $user->isAdmin() && $user->role?->name === 'super_admin';
+        $sameDept = $folder->department_id === $user->department_id;
+        $sharePerm      = $this->getFolderSharePermissionForUser($folder, $user);
+        $isSharedEditor = $sharePerm === 'editor';
+
+        // Only super, same-dept owner, or shared editor can archive
+        if (!$isSuper && !$sameDept && !$isSharedEditor) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        if ($folder->archived_at) {
+            return response()->json(['message' => 'Already archived'], 200);
+        }
+
+        // Archive folder + all descendants + their documents
+        $this->archiveFolderRecursively($folder);
+
+        ActivityLogger::log(
+            $folder,
+            'archived',
+            'Folder archived with contents',
+            $user->id
+        );
+
+        return response()->json([
+            'message' => 'Folder archived',
+            'folder'  => $folder->fresh(['owner', 'department']),
+        ]);
+    }
+
+    public function restore(Request $request, Folder $folder)
+    {
+        $user = $request->user();
+
+        $isSuper  = $user->isAdmin() && $user->role?->name === 'super_admin';
+        $sameDept = $folder->department_id === $user->department_id;
+        $sharePerm      = $this->getFolderSharePermissionForUser($folder, $user);
+        $isSharedEditor = $sharePerm === 'editor';
+
+        // Same permissions as archive/delete
+        if (!$isSuper && !$sameDept && !$isSharedEditor) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        if (!$folder->archived_at) {
+            return response()->json(['message' => 'Not archived'], 200);
+        }
+
+        // Restore folder + all descendants + their documents
+        $this->restoreFolderRecursively($folder);
+
+        ActivityLogger::log(
+            $folder,
+            'restored',
+            'Folder restored from archive',
+            $user->id
+        );
+
+        return response()->json([
+            'message' => 'Folder restored',
+            'folder'  => $folder->fresh(['owner', 'department']),
+        ]);
+    }
 
     public function destroy(Request $request, Folder $folder)
     {
@@ -210,6 +327,64 @@ class FolderController extends Controller
         $folder->delete();
     }
 
+    protected function archiveFolderRecursively(Folder $folder): void
+    {
+        $folder->load(['children', 'documents']);
+
+        // Archive this folder
+        if (!$folder->archived_at) {
+            $folder->archived_at = now();
+            $folder->save();
+        }
+
+        // Archive documents in this folder
+        foreach ($folder->documents as $document) {
+            if (!$document->archived_at) {
+                $document->archived_at = now();
+                $document->save();
+                ActivityLogger::log(
+                    $document,
+                    'archived',
+                    'Document archived with folder'
+                );
+            }
+        }
+
+        // Recurse into children
+        foreach ($folder->children as $child) {
+            $this->archiveFolderRecursively($child);
+        }
+    }
+
+    protected function restoreFolderRecursively(Folder $folder): void
+    {
+        $folder->load(['children', 'documents']);
+
+        // Restore this folder
+        if ($folder->archived_at) {
+            $folder->archived_at = null;
+            $folder->save();
+        }
+
+        // Restore documents in this folder
+        foreach ($folder->documents as $document) {
+            if ($document->archived_at) {
+                $document->archived_at = null;
+                $document->save();
+                ActivityLogger::log(
+                    $document,
+                    'restored',
+                    'Document restored with folder'
+                );
+            }
+        }
+
+        // Recurse into children
+        foreach ($folder->children as $child) {
+            $this->restoreFolderRecursively($child);
+        }
+    }
+
     public function download(Folder $folder)
     {
         try {
@@ -225,7 +400,10 @@ class FolderController extends Controller
                 $queue        = $childIds;
             }
 
-            $documents = Document::whereIn('folder_id', $allFolderIds)->get();
+            // Only include non-archived documents in the ZIP
+            $documents = Document::whereNull('archived_at')
+                ->whereIn('folder_id', $allFolderIds)
+                ->get();
 
             if ($documents->isEmpty()) {
                 return response()->json(['error' => 'No files in this folder'], 404);

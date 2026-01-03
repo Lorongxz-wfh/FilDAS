@@ -105,7 +105,7 @@ export function DocumentGrid({
                 )}
 
                 <DropdownMenu.Item destructive onClick={() => onDelete(item)}>
-                  Delete
+                  Archive
                 </DropdownMenu.Item>
               </DropdownMenu>
 

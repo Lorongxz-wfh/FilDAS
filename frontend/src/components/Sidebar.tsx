@@ -26,19 +26,19 @@ export default function Sidebar({
 
       <nav className="space-y-1">
         <Button
-          variant={itemVariant(activePage === "overview")}
+          variant={itemVariant(activePage === "dashboard")}
           size="sm"
           className="w-full justify-start"
-          onClick={() => onNavigate("overview")}
+          onClick={() => onNavigate("dashboard")}
         >
           Dashboard
         </Button>
 
         <Button
-          variant={itemVariant(activePage === "files")}
+          variant={itemVariant(activePage === "documents")}
           size="sm"
           className="w-full justify-start"
-          onClick={() => onNavigate("files")}
+          onClick={() => onNavigate("documents")}
         >
           Document Manager
         </Button>
@@ -75,12 +75,12 @@ export default function Sidebar({
             </Button>
 
             <Button
-              variant={itemVariant(activePage === "trash")}
+              variant={itemVariant(activePage === "archive")}
               size="sm"
               className="w-full justify-start"
-              onClick={() => onNavigate("trash")}
+              onClick={() => onNavigate("archive")}
             >
-              Archive / Trash
+              Archive
             </Button>
 
             <Button

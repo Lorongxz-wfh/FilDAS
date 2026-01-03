@@ -9,9 +9,14 @@ interface NotificationItem {
   type: string;
   data: {
     item_type?: string;
+    item_id?: number | string;
     item_name?: string;
     permission?: string;
     shared_by?: string;
+
+    // For ItemUpdatedNotification
+    change_type?: string;
+    updated_by?: string;
   };
   read_at: string | null;
   created_at: string;
@@ -79,9 +84,12 @@ export default function TopNav({ onLogout }: TopNavProps) {
   const loadNotifications = async () => {
     try {
       setLoadingNotifs(true);
-      const res = await api.get("/notifications");
+      const res = await api.get("/notifications", {
+        params: { per_page: 10, page: 1 },
+      });
       setNotifications(res.data.notifications || []);
       setUnreadCount(res.data.unread_count || 0);
+      // meta is available in res.data.meta for a full notifications page later
     } catch (err) {
       console.error("Failed to load notifications", err);
     } finally {
@@ -106,7 +114,14 @@ export default function TopNav({ onLogout }: TopNavProps) {
         )
       );
       setUnreadCount((c) => Math.max(0, c - 1));
-      // later: navigate to item using notif.data.item_type / item_id
+
+      if (notif.type === "ItemSharedNotification") {
+        navigate("/shared");
+      } else if (notif.type === "ItemUpdatedNotification") {
+        navigate("/files");
+      } else {
+        navigate("/overview");
+      }
     } catch (err) {
       console.error("Failed to mark notification as read", err);
     }
@@ -207,43 +222,65 @@ export default function TopNav({ onLogout }: TopNavProps) {
                   No notifications yet.
                 </div>
               ) : (
-                <ul className="divide-y divide-slate-800">
-                  {notifications.map((n) => {
-                    const isUnread = !n.read_at;
-                    const label =
-                      n.type === "ItemSharedNotification"
-                        ? `${n.data.shared_by || "Someone"} shared the ${
-                            n.data.item_type || "item"
-                          } "${n.data.item_name || "Untitled"}" with you${
-                            n.data.permission
-                              ? ` (${n.data.permission} access)`
-                              : ""
-                          }.`
-                        : "You have a new notification.";
+                <>
+                  <ul className="divide-y divide-slate-800">
+                    {notifications.map((n) => {
+                      const isUnread = !n.read_at;
+                      let label: string;
 
-                    return (
-                      <li key={n.id}>
-                        <button
-                          onClick={() => handleNotificationClick(n)}
-                          className={`w-full text-left px-3 py-2 hover:bg-slate-800 ${
-                            isUnread ? "bg-slate-900/80" : ""
-                          }`}
-                        >
-                          <p
-                            className={`text-[12px] ${
-                              isUnread ? "text-slate-50" : "text-slate-300"
+                      if (n.type === "ItemSharedNotification") {
+                        label = `${n.data.shared_by || "Someone"} shared the ${
+                          n.data.item_type || "item"
+                        } "${n.data.item_name || "Untitled"}" with you${
+                          n.data.permission
+                            ? ` (${n.data.permission} access)`
+                            : ""
+                        }.`;
+                      } else if (n.type === "ItemUpdatedNotification") {
+                        const change = n.data.change_type || "updated";
+                        label = `${
+                          n.data.updated_by || "Someone"
+                        } ${change} your ${n.data.item_type || "item"} "${
+                          n.data.item_name || "Untitled"
+                        }".`;
+                      } else {
+                        label = "You have a new notification.";
+                      }
+
+                      return (
+                        <li key={n.id}>
+                          <button
+                            onClick={() => handleNotificationClick(n)}
+                            className={`w-full text-left px-3 py-2 hover:bg-slate-800 ${
+                              isUnread ? "bg-slate-900/80" : ""
                             }`}
                           >
-                            {label}
-                          </p>
-                          <p className="mt-0.5 text-[10px] text-slate-500">
-                            {new Date(n.created_at).toLocaleString()}
-                          </p>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
+                            <p
+                              className={`text-[12px] ${
+                                isUnread ? "text-slate-50" : "text-slate-300"
+                              }`}
+                            >
+                              {label}
+                            </p>
+                            <p className="mt-0.5 text-[10px] text-slate-500">
+                              {new Date(n.created_at).toLocaleString()}
+                            </p>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+
+                  <button
+                    className="w-full px-3 py-2 text-[11px] text-sky-400 hover:text-sky-300 border-t border-slate-800 text-left"
+                    onClick={() => {
+                      setNotifOpen(false);
+                      navigate("/notifications");
+                    }}
+                  >
+                    View all notifications
+                  </button>
+                </>
               )}
             </div>
           )}

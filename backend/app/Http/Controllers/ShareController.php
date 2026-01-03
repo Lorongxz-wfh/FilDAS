@@ -287,9 +287,11 @@ class ShareController extends Controller
             }
         }
 
-        // 3c) Apply folder permissions to documents in those folders
+        // 3c) Apply folder permissions to documents in those folders (only non-archived)
         if (!empty($allSharedFolderIds)) {
-            $docsInSharedFolders = Document::whereIn('folder_id', $allSharedFolderIds)->get(['id', 'folder_id']);
+            $docsInSharedFolders = Document::whereNull('archived_at')
+                ->whereIn('folder_id', $allSharedFolderIds)
+                ->get(['id', 'folder_id']);
 
             foreach ($docsInSharedFolders as $doc) {
                 $folderPerm = $folderPermissionById[$doc->folder_id] ?? null;
@@ -299,8 +301,9 @@ class ShareController extends Controller
             }
         }
 
-        // 4) Base query: direct docs OR docs in shared folders
+        // 4) Base query: direct docs OR docs in shared folders (only non-archived)
         $docsQuery = Document::with(['folder.department', 'uploadedBy'])
+            ->whereNull('archived_at')
             ->where(function ($q) use ($directDocIds, $allSharedFolderIds) {
                 if (!empty($directDocIds)) {
                     $q->whereIn('id', $directDocIds);
@@ -392,8 +395,9 @@ class ShareController extends Controller
 
         $allSharedFolderIds = array_keys($folderPermissionById);
 
-        // 3) Query folders
+        // 3) Query folders (only non-archived)
         $foldersQuery = Folder::with(['department', 'owner'])
+            ->whereNull('archived_at')
             ->whereIn('id', $allSharedFolderIds);
 
         // Filter by parent_id for navigation in SharedFilesPage
@@ -458,6 +462,7 @@ class ShareController extends Controller
         }
 
         $docsQuery = Document::with(['folder.department', 'uploadedBy'])
+            ->whereNull('archived_at')
             ->where(function ($q) use ($directDocIds, $allSharedFolderIds) {
                 if (!empty($directDocIds)) $q->whereIn('id', $directDocIds);
                 if (!empty($allSharedFolderIds)) $q->orWhereIn('folder_id', $allSharedFolderIds);
@@ -544,6 +549,7 @@ class ShareController extends Controller
         $allSharedFolderIds = array_keys($folderPermissionById);
 
         $foldersQuery = Folder::with(['department', 'owner'])
+            ->whereNull('archived_at')
             ->whereIn('id', $allSharedFolderIds)
             ->where(function ($q) use ($search) {
                 $like = "%{$search}%";

@@ -10,27 +10,37 @@ class NotificationController extends Controller
     {
         $user = $request->user();
 
-        $notifications = $user->notifications()
+        $perPage = (int) $request->query('per_page', 20);
+        $perPage = $perPage > 50 ? 50 : $perPage; // safety cap [web:343]
+
+        $paginator = $user->notifications()
             ->orderBy('created_at', 'desc')
-            ->limit(20)
-            ->get()
-            ->map(function ($notification) {
-                return [
-                    'id'          => $notification->id,
-                    'type'        => class_basename($notification->type),
-                    'data'        => $notification->data,
-                    'read_at'     => $notification->read_at,
-                    'created_at'  => $notification->created_at,
-                ];
-            });
+            ->paginate($perPage);
+
+        $notifications = $paginator->getCollection()->map(function ($notification) {
+            return [
+                'id'          => $notification->id,
+                'type'        => class_basename($notification->type),
+                'data'        => $notification->data,
+                'read_at'     => $notification->read_at,
+                'created_at'  => $notification->created_at,
+            ];
+        });
 
         $unreadCount = $user->unreadNotifications()->count();
 
         return response()->json([
             'notifications' => $notifications,
             'unread_count'  => $unreadCount,
+            'meta' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page'    => $paginator->lastPage(),
+                'per_page'     => $paginator->perPage(),
+                'total'        => $paginator->total(),
+            ],
         ]);
     }
+
 
     public function markAsRead(Request $request, string $id)
     {

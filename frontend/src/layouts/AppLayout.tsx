@@ -8,22 +8,22 @@ import { useCurrentUser } from "../lib/useCurrentUser";
 
 const pathToPageKey = (pathname: string): PageKey => {
   switch (pathname) {
-    case "/overview":
-      return "overview";
-    case "/files":
-      return "files";
+    case "/dashboard":
+      return "dashboard";
+    case "/documents":
+      return "documents";
     case "/shared":
       return "shared";
     case "/users":
       return "users";
-    case "/trash":
-      return "trash";
+    case "/archive":
+      return "archive";
     case "/departments":
       return "departments";
     case "/audit-logs":
       return "audit-logs";
     default:
-      return "overview";
+      return "dashboard";
   }
 };
 
@@ -49,12 +49,12 @@ function AppLayout() {
 
 const handleNavigate = (page: PageKey) => {
   const pageToPath: Record<PageKey, string> = {
-    overview: "/overview",
-    files: "/files",
+    dashboard: "/dashboard",
+    documents: "/documents",
     shared: "/shared",
-    users: "/users",
-    trash: "/trash",
     departments: "/departments",
+    users: "/users",
+    archive: "/archive",
     "audit-logs": "/audit-logs",
   };
   navigate(pageToPath[page]);

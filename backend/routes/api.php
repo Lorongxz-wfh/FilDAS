@@ -78,10 +78,16 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/folders/{folder}/move', [FolderController::class, 'move']);
     Route::post('/folders/{folder}/copy', [FolderController::class, 'copy']);
     Route::get('/folders/{folder}/activity', [FolderController::class, 'activity']);
+    Route::get('/archive/folders', [FolderController::class, 'archiveIndex']);
+    Route::post('/folders/{folder}/archive', [FolderController::class, 'archive']);
+    Route::post('/folders/{folder}/restore', [FolderController::class, 'restore']);
+
 
     // Documents
     Route::get('/documents', [DocumentController::class, 'index']);
     Route::post('/documents', [DocumentController::class, 'store']);
+    Route::get('/archive/documents', [DocumentController::class, 'archiveIndex']);
+
 
     // SHARED documents (used by SharedFilesPage) – MUST be before /documents/{document}
     Route::get('/documents/shared', [ShareController::class, 'sharedDocuments']);
@@ -98,6 +104,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
         ->name('documents.download');
     Route::post('/documents/{document}/move', [DocumentController::class, 'move']);
     Route::post('/documents/{document}/copy', [DocumentController::class, 'copy']);
+    Route::post('/documents/{document}/archive', [DocumentController::class, 'archive']);
+    Route::post('/documents/{document}/restore', [DocumentController::class, 'restore']);
     Route::get('/documents/{document}/activity', [DocumentController::class, 'activity']);
     Route::get('/documents/statistics/summary', [DocumentController::class, 'statistics']);
 
