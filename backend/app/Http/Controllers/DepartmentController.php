@@ -29,8 +29,8 @@ class DepartmentController extends Controller
             'owner_id'           => 'nullable|exists:users,id',
             'theme_color'        => 'nullable|string|max:20',
             'is_active'          => 'sometimes|boolean',
+            'is_qa'              => 'sometimes|boolean',
         ]);
-
 
         // Normalize empty code to null so it doesn't violate unique index accidentally
         if (array_key_exists('code', $validated) && $validated['code'] === '') {
@@ -61,14 +61,17 @@ class DepartmentController extends Controller
         $department = Department::findOrFail($id);
 
         $validated = $request->validate([
-            'name'               => 'required|string|max:255|unique:departments,name,' . $id,
-            'code'               => 'nullable|string|max:255|unique:departments,code,' . $id,
-            'description'        => 'nullable|string',
-            'department_type_id' => 'nullable|exists:department_types,id',
-            'owner_id'           => 'nullable|exists:users,id',
-            'theme_color'        => 'nullable|string|max:20',
+            'name'               => 'sometimes|required|string|max:255|unique:departments,name,' . $id,
+            'code'               => 'sometimes|nullable|string|max:255|unique:departments,code,' . $id,
+            'description'        => 'sometimes|nullable|string',
+            'department_type_id' => 'sometimes|nullable|exists:department_types,id',
+            'owner_id'           => 'sometimes|nullable|exists:users,id',
+            'theme_color'        => 'sometimes|nullable|string|max:20',
             'is_active'          => 'sometimes|boolean',
+            'is_qa'              => 'sometimes|boolean',
         ]);
+
+
 
 
         if (array_key_exists('code', $validated) && $validated['code'] === '') {

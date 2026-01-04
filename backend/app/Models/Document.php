@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
+use App\Models\Comment;
+
 
 class Document extends Model
 {
@@ -25,12 +27,16 @@ class Document extends Model
         'uploaded_by',
         'owner_id',
         'uploaded_at',
+        'status',
+        'approved_by',
+        'approved_at',
     ];
 
     protected $casts = [
         'uploaded_at' => 'datetime',
         'size_bytes'  => 'integer',
         'archived_at' => 'datetime',
+        'approved_at' => 'datetime',
     ];
 
     protected $appends = ['file_size_formatted'];
@@ -75,6 +81,11 @@ class Document extends Model
         return $this->morphMany(Activity::class, 'subject');
     }
 
+    public function comments()
+    {
+        return $this->morphMany(Comment::class, 'commentable')->latest();
+    }
+
     // Only non-archived documents
     public function scopeNotArchived($query)
     {
@@ -91,5 +102,20 @@ class Document extends Model
     public function originalOwner()
     {
         return $this->belongsTo(User::class, 'original_owner_id');
+    }
+
+    public function scopePending($query)
+    {
+        return $query->where('status', 'pending');
+    }
+
+    public function scopeApproved($query)
+    {
+        return $query->where('status', 'approved');
+    }
+
+    public function scopeRejected($query)
+    {
+        return $query->where('status', 'rejected');
     }
 }

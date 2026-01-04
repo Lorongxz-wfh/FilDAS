@@ -9,9 +9,10 @@ import UserManagerPage from "./pages/UserManagerPage";
 // import ReportsPage from "./pages/ReportsPage";
 import DepartmentManagerPage from "./pages/DepartmentManagerPage";
 import { api, setAuthToken } from "./lib/api";
-import AuditLogsPage from "./pages/AuditLogsPage";
+import AuditLogsPage from "./pages/ActivityLogsPage";
 import NotificationsPage from "./pages/NotificationsPage";
 import ArchivePage from "./features/documents/pages/ArchivePage";
+import QaApprovalCenterPage from "./features/documents/pages/QaApprovalCenterPage";
 
 
 
@@ -103,8 +104,9 @@ function App() {
             <Route path="/users" element={<UserManagerPage />} />
             <Route path="/departments" element={<DepartmentManagerPage />} />
             <Route path="/archive" element={<ArchivePage />} />
+            <Route path="/qa-approvals" element={<QaApprovalCenterPage />} />
             {/* <Route path="/reports" element={<ReportsPage />} /> */}
-            <Route path="/audit-logs" element={<AuditLogsPage />} />
+            <Route path="/activity-logs" element={<AuditLogsPage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
           </Route>
         ) : (

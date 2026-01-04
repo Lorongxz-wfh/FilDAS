@@ -18,6 +18,7 @@ type Department = {
   code: string | null;
   description: string | null;
   is_active: boolean;
+  is_qa?: boolean; // QA flag
   theme_color?: string | null;
   logo_path?: string | null;
   created_at: string;
@@ -65,7 +66,9 @@ export default function DepartmentManagerPage() {
   const [formOwnerId, setFormOwnerId] = useState<number | null>(null);
   const [formThemeColor, setFormThemeColor] = useState("");
   const [formIsActive, setFormIsActive] = useState(true);
+  const [formIsQa, setFormIsQa] = useState(false);
   const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoPreviewUrl, setLogoPreviewUrl] = useState<string | null>(null);
 
   const [saving, setSaving] = useState(false);
 
@@ -120,6 +123,7 @@ export default function DepartmentManagerPage() {
     setFormOwnerId(null);
     setFormThemeColor("");
     setFormIsActive(true);
+    setFormIsQa(false);
     setLogoFile(null);
     setActiveDept(null);
   };
@@ -138,6 +142,7 @@ export default function DepartmentManagerPage() {
     setFormOwnerId((dept as any).owner_id ?? dept.owner?.id ?? null);
     setFormThemeColor(dept.theme_color || "");
     setFormIsActive(dept.is_active ?? true);
+    setFormIsQa(!!(dept as any).is_qa);
     setLogoFile(null);
     setEditOpen(true);
   };
@@ -147,7 +152,6 @@ export default function DepartmentManagerPage() {
       state: { departmentId: dept.id },
     });
   };
-
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -171,6 +175,7 @@ export default function DepartmentManagerPage() {
           owner_id: formOwnerId,
           theme_color: formThemeColor.trim() || null,
           is_active: formIsActive,
+          is_qa: formIsQa,
         });
 
         let updated: Department = res.data.department ?? res.data;
@@ -200,7 +205,9 @@ export default function DepartmentManagerPage() {
           owner_id: formOwnerId,
           theme_color: formThemeColor.trim() || null,
           is_active: formIsActive,
+          is_qa: formIsQa,
         });
+
         let created: Department = res.data.department ?? res.data;
 
         // If logo selected, upload it
@@ -502,6 +509,7 @@ export default function DepartmentManagerPage() {
         }}
       >
         <form className="space-y-3 text-sm" onSubmit={handleSubmit}>
+          {/* Name + code + description */}
           <div>
             <label className="mb-1 block text-xs text-slate-400">Name *</label>
             <input
@@ -511,6 +519,7 @@ export default function DepartmentManagerPage() {
               required
             />
           </div>
+
           <div>
             <label className="mb-1 block text-xs text-slate-400">
               Code (optional)
@@ -521,6 +530,7 @@ export default function DepartmentManagerPage() {
               onChange={(e) => setFormCode(e.target.value)}
             />
           </div>
+
           <div>
             <label className="mb-1 block text-xs text-slate-400">
               Description (optional)
@@ -533,6 +543,7 @@ export default function DepartmentManagerPage() {
             />
           </div>
 
+          {/* Type + owner */}
           <div className="grid gap-3 md:grid-cols-2">
             <div>
               <label className="mb-1 block text-xs text-slate-400">
@@ -575,6 +586,7 @@ export default function DepartmentManagerPage() {
             </div>
           </div>
 
+          {/* Theme color + logo */}
           <div className="grid gap-3 md:grid-cols-2">
             <div>
               <label className="mb-1 block text-xs text-slate-400">
@@ -607,22 +619,24 @@ export default function DepartmentManagerPage() {
             </div>
           </div>
 
+          {/* QA department only (no Active checkbox here) */}
           <div className="flex items-center gap-2 pt-1">
             <input
-              id="dept-active"
+              id="dept-qa"
               type="checkbox"
               className="h-3 w-3 rounded border-slate-600 bg-slate-900 text-sky-500"
-              checked={formIsActive}
-              onChange={(e) => setFormIsActive(e.target.checked)}
+              checked={formIsQa}
+              onChange={(e) => setFormIsQa(e.target.checked)}
             />
             <label
-              htmlFor="dept-active"
+              htmlFor="dept-qa"
               className="text-xs text-slate-300 select-none"
             >
-              Active department
+              QA department (can review all docs)
             </label>
           </div>
 
+          {/* Actions */}
           <div className="flex justify-end gap-2 pt-2">
             <Button
               type="button"

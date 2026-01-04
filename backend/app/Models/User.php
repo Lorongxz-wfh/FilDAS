@@ -122,4 +122,19 @@ class User extends Authenticatable
 
         return 'active';
     }
+
+    public function isQa(): bool
+    {
+        return $this->department && $this->department->is_qa;
+    }
+
+    public function isQaAdmin(): bool
+    {
+        return $this->isAdmin() && $this->isQa();
+    }
+
+    public function isQaStaff(): bool
+    {
+        return $this->isStaff() && $this->isQa();
+    }
 }

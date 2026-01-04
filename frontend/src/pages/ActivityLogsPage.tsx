@@ -72,7 +72,9 @@ type LayoutContext = {
   isAdmin: boolean;
 };
 
-export default function AuditLogsPage() {
+const formatDate = (d: Date) => d.toISOString().slice(0, 10);
+
+export default function ActivityLogsPage() {
   const { isSuperAdmin, isAdmin } = useOutletContext<LayoutContext>();
 
   const [logs, setLogs] = useState<AuditLogRow[]>([]);
@@ -86,6 +88,9 @@ export default function AuditLogsPage() {
   const [action, setAction] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [datePreset, setDatePreset] = useState<
+    "any" | "today" | "last7" | "last30"
+  >("any");
   const [departmentId, setDepartmentId] = useState("");
 
   // departments for Super Admin filter
@@ -109,9 +114,9 @@ export default function AuditLogsPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.get<AuditLogResponse>("/audit-logs", {
+      const res = await api.get<AuditLogResponse>("/activity-logs", {
         params: {
-          user_id: userId || undefined,
+          user_name: userId || undefined,
           subject_type: subjectType || undefined,
           subject_id: subjectId || undefined,
           action: action || undefined,
@@ -173,7 +178,7 @@ export default function AuditLogsPage() {
 
     return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId, subjectType, subjectId, action, dateFrom, dateTo]);
+  }, [userId, subjectType, subjectId, action, dateFrom, dateTo, departmentId]);
 
   const handleApplyFilters = () => {
     setPage(1);
@@ -195,19 +200,21 @@ export default function AuditLogsPage() {
   return (
     <div className="flex h-full flex-col gap-3">
       <header>
-        <h1 className="mb-1 text-2xl font-semibold text-white">Audit logs</h1>
+        <h1 className="mb-1 text-2xl font-semibold text-white">
+          Activity logs
+        </h1>
       </header>
 
       {/* Filters */}
       <section className="rounded-lg border border-slate-800 bg-slate-900/60 p-2.5 text-xs">
         <div className="mb-1.5 flex flex-wrap items-end gap-3">
           <div className="flex flex-col">
-            <label className="mb-1 text-[11px] text-slate-400">User ID</label>
+            <label className="mb-1 text-[11px] text-slate-400">User</label>
             <input
-              className="w-32 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+              className="w-35 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
               value={userId}
               onChange={(e) => setUserId(e.target.value)}
-              placeholder="e.g. 5"
+              placeholder="Search name…"
             />
           </div>
           {isSuperAdmin && (
@@ -216,7 +223,7 @@ export default function AuditLogsPage() {
                 Department
               </label>
               <select
-                className="w-44 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+                className="w-52 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
                 value={departmentId}
                 onChange={(e) => setDepartmentId(e.target.value)}
               >
@@ -232,11 +239,9 @@ export default function AuditLogsPage() {
           )}
 
           <div className="flex flex-col">
-            <label className="mb-1 text-[11px] text-slate-400">
-                Type
-            </label>
+            <label className="mb-1 text-[11px] text-slate-400">Type</label>
             <select
-              className="w-44 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+              className="w-30 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
               value={subjectType}
               onChange={(e) => setSubjectType(e.target.value)}
             >
@@ -253,17 +258,19 @@ export default function AuditLogsPage() {
               Subject ID
             </label>
             <input
-              className="w-32 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+              className="w-20 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
               value={subjectId}
-              onChange={(e) => setSubjectId(e.target.value)}
-              placeholder="#1"
+              onChange={(e) =>
+                setSubjectId(e.target.value.replace(/[^0-9]/g, ""))
+              }
+              placeholder="e.g. 1"
             />
           </div>
 
           <div className="flex flex-col">
             <label className="mb-1 text-[11px] text-slate-400">Action</label>
             <select
-              className="w-36 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+              className="w-40 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
               value={action}
               onChange={(e) => setAction(e.target.value)}
             >
@@ -276,23 +283,78 @@ export default function AuditLogsPage() {
           </div>
 
           <div className="flex flex-col">
-            <label className="mb-1 text-[11px] text-slate-400">Date from</label>
-            <input
-              type="date"
-              className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-            />
-          </div>
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col">
+                <label className="mb-1 text-[11px] text-slate-400">
+                  Date from
+                </label>
+                <input
+                  type="date"
+                  className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                />
+              </div>
 
-          <div className="flex flex-col">
-            <label className="mb-1 text-[11px] text-slate-400">Date to</label>
-            <input
-              type="date"
-              className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-            />
+              <div className="flex flex-col">
+                <label className="mb-1 text-[11px] text-slate-400">
+                  Date to
+                </label>
+                <input
+                  type="date"
+                  className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                />
+              </div>
+
+              <div className="flex flex-col">
+                <label className="mb-1 text-[11px] text-slate-400">
+                  Range preset
+                </label>
+                <select
+                  className="w-25 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+                  value={datePreset}
+                  onChange={(e) => {
+                    const value = e.target.value as
+                      | "any"
+                      | "today"
+                      | "last7"
+                      | "last30";
+                    setDatePreset(value);
+
+                    if (value === "any") {
+                      setDateFrom("");
+                      setDateTo("");
+                      return;
+                    }
+
+                    const today = new Date();
+                    const todayStr = formatDate(today);
+
+                    if (value === "today") {
+                      setDateFrom(todayStr);
+                      setDateTo(todayStr);
+                    } else if (value === "last7") {
+                      const from = new Date();
+                      from.setDate(today.getDate() - 6); // inclusive 7 days
+                      setDateFrom(formatDate(from));
+                      setDateTo(todayStr);
+                    } else if (value === "last30") {
+                      const from = new Date();
+                      from.setDate(today.getDate() - 29); // inclusive 30 days
+                      setDateFrom(formatDate(from));
+                      setDateTo(todayStr);
+                    }
+                  }}
+                >
+                  <option value="any">Any</option>
+                  <option value="today">Today</option>
+                  <option value="last7">Last 7 days</option>
+                  <option value="last30">Last 30 days</option>
+                </select>
+              </div>
+            </div>
           </div>
 
           <div className="ml-auto flex gap-2">
@@ -320,14 +382,16 @@ export default function AuditLogsPage() {
           <table className="min-w-full text-left text-xs">
             <thead className="border-b border-slate-800 text-[11px] uppercase text-slate-400">
               <tr>
-                <th className="py-2 pr-3">Date</th>
                 <th className="py-2 pr-3">User</th>
                 <th className="py-2 pr-3">Department</th>
-                <th className="py-2 pr-3">Action</th>
                 <th className="py-2 pr-3">Subject</th>
+                <th className="py-2 pr-3">Type</th>
+                <th className="py-2 pr-3">Action</th>
+                <th className="py-2 pr-3">Date</th>
                 <th className="py-2 pr-3">Details</th>
               </tr>
             </thead>
+
             <tbody className="divide-y divide-slate-800">
               {loading && (
                 <tr>
@@ -335,7 +399,7 @@ export default function AuditLogsPage() {
                     colSpan={5}
                     className="py-4 text-center text-xs text-slate-500"
                   >
-                    Loading audit logs…
+                    Loading activity logs…
                   </td>
                 </tr>
               )}
@@ -346,7 +410,7 @@ export default function AuditLogsPage() {
                     colSpan={5}
                     className="py-4 text-center text-xs text-slate-500"
                   >
-                    No audit logs found.
+                    No activity logs found.
                   </td>
                 </tr>
               )}
@@ -354,9 +418,6 @@ export default function AuditLogsPage() {
               {!loading &&
                 logs.map((log) => (
                   <tr key={log.id} className="hover:bg-slate-800/60">
-                    <td className="py-1.5 pr-3 text-slate-300">
-                      {new Date(log.created_at).toLocaleString()}
-                    </td>
                     <td className="py-1.5 pr-3 text-slate-200">
                       {log.user_name ?? `User #${log.user_id ?? "-"}`}
                     </td>
@@ -366,9 +427,16 @@ export default function AuditLogsPage() {
                           ? `Dept #${log.department_id}`
                           : "—")}
                     </td>
-                    <td className="py-1.5 pr-3 text-sky-300">{log.action}</td>
                     <td className="py-1.5 pr-3 text-slate-300">
                       {formatSubject(log.subject_type, log.subject_id)}
+                    </td>
+                    <td className="py-1.5 pr-3 text-slate-300">
+                      {/* Type = human-friendly version of subject_type */}
+                      {formatSubject(log.subject_type, null)}
+                    </td>
+                    <td className="py-1.5 pr-3 text-sky-300">{log.action}</td>
+                    <td className="py-1.5 pr-3 text-slate-300">
+                      {new Date(log.created_at).toLocaleString()}
                     </td>
                     <td className="py-1.5 pr-3 max-w-xs truncate text-slate-400">
                       {log.details ?? "—"}

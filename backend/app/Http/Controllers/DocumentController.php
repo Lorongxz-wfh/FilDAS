@@ -39,21 +39,56 @@ class DocumentController extends Controller
             });
         }
 
-        // Non‑admin users (staff) are restricted to their own department + shares.
-        // SuperAdmin (role_id === 1) and Admin (role_id === 2) can see any department.
-        if (!$user->isAdmin() && !$user->isSuperAdmin()) {
+        // Visibility rules with status:
+        // - Super Admin: all non-archived documents (any status).
+        // - Admin: all non-archived documents in their own department (any status).
+        // - Staff:
+        //     * Always see documents they uploaded or own (any status).
+        //     * In their department: only approved documents.
+        //     * Shared documents: only approved documents.
+        $isSuperAdmin = $user->isSuperAdmin();
+        $isAdmin      = $user->isAdmin();
+
+        if ($isSuperAdmin) {
+            // No extra restriction; can see any non-archived doc.
+        } elseif ($isAdmin) {
+            // Department admin: all docs in their department, regardless of status.
+            if ($user->department_id) {
+                $query->where('department_id', $user->department_id);
+            } else {
+                // Admin without department sees nothing.
+                $query->whereRaw('1 = 0');
+            }
+        } else {
+            // Staff-level visibility.
             $deptId = $user->department_id;
+
             $sharedDocumentIds = Share::where('target_user_id', $user->id)
                 ->whereNotNull('document_id')
                 ->pluck('document_id')
                 ->toArray();
 
-            $query->where(function ($q) use ($deptId, $sharedDocumentIds) {
+            $query->where(function ($q) use ($user, $deptId, $sharedDocumentIds) {
+                // 1) Uploader or owner: always visible, any status.
+                $q->where(function ($q2) use ($user) {
+                    $q2->where('uploaded_by', $user->id)
+                        ->orWhere('owner_id', $user->id);
+                });
+
+                // 2) Same department, approved documents.
                 if ($deptId) {
-                    $q->where('department_id', $deptId);
+                    $q->orWhere(function ($q2) use ($deptId) {
+                        $q2->where('department_id', $deptId)
+                            ->where('status', 'approved');
+                    });
                 }
+
+                // 3) Shared directly, approved documents.
                 if (!empty($sharedDocumentIds)) {
-                    $q->orWhereIn('id', $sharedDocumentIds);
+                    $q->orWhere(function ($q2) use ($sharedDocumentIds) {
+                        $q2->whereIn('id', $sharedDocumentIds)
+                            ->where('status', 'approved');
+                    });
                 }
             });
         }
@@ -208,6 +243,7 @@ class DocumentController extends Controller
             'owner_id'          => $uploaderId,
             'original_owner_id' => $uploaderId,
             'uploaded_at'       => now(),
+            'status'            => 'pending',
         ]);
 
 
@@ -758,10 +794,10 @@ class DocumentController extends Controller
         $isSuper  = $user->isAdmin() && $user->role?->name === 'super_admin';
         $sameDept = $document->department_id === $user->department_id;
 
-        $sharePerm            = $this->getDocumentSharePermissionForUser($document, $user);
-        $isSharedEditor       = $sharePerm === 'editor';
-        $isSharedContributor  = $sharePerm === 'contributor';
-        $isOwner              = (int) $document->owner_id === (int) $user->id
+        $sharePerm           = $this->getDocumentSharePermissionForUser($document, $user);
+        $isSharedEditor      = $sharePerm === 'editor';
+        $isSharedContributor = $sharePerm === 'contributor';
+        $isOwner             = (int) $document->owner_id === (int) $user->id
             || (int) $document->uploaded_by === (int) $user->id;
 
         // Allow copy if:
@@ -769,7 +805,6 @@ class DocumentController extends Controller
         // - same department, OR
         // - shared editor, OR
         // - shared contributor AND owner
-        // (viewer can still copy via their own dept context, not via shared edit rights)
         if (
             !$isSuper &&
             !$sameDept &&
@@ -778,10 +813,6 @@ class DocumentController extends Controller
         ) {
             return response()->json(['error' => 'Forbidden'], 403);
         }
-
-
-
-
 
         $targetFolder = null;
         if (!empty($data['target_folder_id'])) {
@@ -797,7 +828,6 @@ class DocumentController extends Controller
             return response()->json(['error' => 'Forbidden'], 403);
         }
 
-
         $copy = Document::create([
             'title'             => $document->title,
             'description'       => $document->description,
@@ -812,6 +842,7 @@ class DocumentController extends Controller
             'owner_id'          => $user->id,
             'original_owner_id' => $document->original_owner_id ?? $document->owner_id ?? $user->id,
             'uploaded_at'       => now(),
+            'status'            => 'pending',
         ]);
 
         // log on new document
@@ -836,6 +867,126 @@ class DocumentController extends Controller
         ]);
     }
 
+    /**
+     * GET /qa/approvals
+     * List documents for QA (Super Admin + all QA members).
+     */
+    public function qaIndex(Request $request)
+    {
+        $user = $request->user();
+
+        // Any QA member can see the list; only QA Admin / Super Admin can approve.
+        if (!$user->isSuperAdmin() && !$user->isQa()) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        $status = $request->get('status', 'pending'); // pending|approved|rejected|all
+        $deptId = $request->get('department_id');
+        $search = $request->get('q');
+
+        $query = Document::with(['department', 'uploadedBy', 'owner'])
+            ->notArchived();
+
+        if ($status !== 'all') {
+            $query->where('status', $status);
+        }
+
+        if ($deptId) {
+            $query->where('department_id', (int) $deptId);
+        }
+
+        if ($search) {
+            $like = '%' . $search . '%';
+            $query->where(function ($q) use ($like) {
+                $q->where('title', 'like', $like)
+                    ->orWhere('original_filename', 'like', $like)
+                    ->orWhereHas('uploadedBy', function ($sub) use ($like) {
+                        $sub->where('name', 'like', $like);
+                    })
+                    ->orWhereHas('department', function ($sub) use ($like) {
+                        $sub->where('name', 'like', $like);
+                    });
+            });
+        }
+
+        $perPage = min((int) $request->get('per_page', 25), 100);
+
+        $docs = $query
+            ->orderBy('uploaded_at', 'desc')
+            ->paginate($perPage);
+
+        return response()->json($docs);
+    }
+
+    /**
+     * POST /documents/{document}/approve
+     */
+    public function approve(Request $request, Document $document)
+    {
+        $user = $request->user();
+
+        // Only Super Admin or QA Admin can approve.
+        if (!$user->isSuperAdmin() && !$user->isQaAdmin()) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        if ($document->archived_at) {
+            return response()->json(['error' => 'Cannot approve archived document'], 400);
+        }
+
+        $document->status      = 'approved';
+        $document->approved_by = $user->id;
+        $document->approved_at = now();
+        $document->save();
+
+        ActivityLogger::log(
+            $document,
+            'approved',
+            'Document approved',
+            $user->id
+        );
+
+        return response()->json($document->fresh(['folder', 'uploadedBy', 'owner']));
+    }
+
+    /**
+     * POST /documents/{document}/reject
+     */
+    public function reject(Request $request, Document $document)
+    {
+        $user = $request->user();
+
+        // Only Super Admin or QA Admin can reject.
+        if (!$user->isSuperAdmin() && !$user->isQaAdmin()) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        if ($document->archived_at) {
+            return response()->json(['error' => 'Cannot reject archived document'], 400);
+        }
+
+        $reason = $request->input('reason'); // optional for now
+
+        $document->status      = 'rejected';
+        $document->approved_by = $user->id;
+        $document->approved_at = now();
+        $document->save();
+
+        $details = 'Document rejected';
+        if ($reason) {
+            $details .= ': ' . $reason;
+        }
+
+        ActivityLogger::log(
+            $document,
+            'rejected',
+            $details,
+            $user->id
+        );
+
+        return response()->json($document->fresh(['folder', 'uploadedBy', 'owner']));
+    }
+
     public function activity(Document $document)
     {
         $activities = $document->activities()
@@ -844,11 +995,11 @@ class DocumentController extends Controller
             ->get()
             ->map(function (Activity $a) {
                 return [
-                    'id'        => $a->id,
-                    'action'    => $a->action,
-                    'details'   => $a->details,
+                    'id'         => $a->id,
+                    'action'     => $a->action,
+                    'details'    => $a->details,
                     'created_at' => $a->created_at,
-                    'user'      => $a->user ? [
+                    'user'       => $a->user ? [
                         'id'    => $a->user->id,
                         'name'  => $a->user->name,
                         'email' => $a->user->email,

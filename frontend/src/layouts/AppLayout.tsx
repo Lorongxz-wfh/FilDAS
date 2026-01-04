@@ -20,8 +20,8 @@ const pathToPageKey = (pathname: string): PageKey => {
       return "archive";
     case "/departments":
       return "departments";
-    case "/audit-logs":
-      return "audit-logs";
+    case "/activity-logs":
+      return "activity-logs";
     default:
       return "dashboard";
   }
@@ -55,7 +55,7 @@ const handleNavigate = (page: PageKey) => {
     departments: "/departments",
     users: "/users",
     archive: "/archive",
-    "audit-logs": "/audit-logs",
+    "activity-logs": "/activity-logs",
   };
   navigate(pageToPath[page]);
 };

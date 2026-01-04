@@ -77,18 +77,18 @@ export default function Sidebar({
             </Button>
 
             <Button
-              variant={itemVariant(activePage === "audit-logs")}
+              variant={itemVariant(activePage === "activity-logs")}
               size="sm"
               className="w-full justify-start"
-              onClick={() => onNavigate("audit-logs")}
+              onClick={() => onNavigate("activity-logs")}
             >
-              Audit Logs
+              Activity Logs
             </Button>
           </>
         )}
 
         {/* Department Admin (Admin but not Super Admin):
-            Can manage users and view audit logs scoped to their department. */}
+            Can manage users and view activity logs scoped to their department. */}
         {!isSuperAdmin && isAdmin && (
           <>
             <Button
@@ -101,12 +101,12 @@ export default function Sidebar({
             </Button>
 
             <Button
-              variant={itemVariant(activePage === "audit-logs")}
+              variant={itemVariant(activePage === "activity-logs")}
               size="sm"
               className="w-full justify-start"
-              onClick={() => onNavigate("audit-logs")}
+              onClick={() => onNavigate("activity-logs")}
             >
-              Audit Logs
+              Activity Logs
             </Button>
           </>
         )}

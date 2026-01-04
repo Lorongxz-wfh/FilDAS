@@ -32,8 +32,8 @@ Route::middleware(['auth:sanctum'])->group(function () {
         return $request->user()->load(['role', 'department']);
     });
 
-    // Audit logs (super admin / admin only)
-    Route::get('/audit-logs', [\App\Http\Controllers\Api\AuditLogController::class, 'index']);
+    // Activity logs (super admin / admin only)
+    Route::get('/activity-logs', [\App\Http\Controllers\Api\ActivityLogController::class, 'index']);
 
     // Users
     Route::get('/users', [UserController::class, 'index']);
@@ -108,6 +108,15 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/documents/{document}/restore', [DocumentController::class, 'restore']);
     Route::get('/documents/{document}/activity', [DocumentController::class, 'activity']);
     Route::get('/documents/statistics/summary', [DocumentController::class, 'statistics']);
+
+    // QA approvals
+    Route::get('/qa/approvals', [DocumentController::class, 'qaIndex']);
+    Route::post('/documents/{document}/approve', [DocumentController::class, 'approve']);
+    Route::post('/documents/{document}/reject', [DocumentController::class, 'reject']);
+
+    // Document comments
+    Route::get('/documents/{document}/comments', [\App\Http\Controllers\CommentController::class, 'indexForDocument']);
+    Route::post('/documents/{document}/comments', [\App\Http\Controllers\CommentController::class, 'storeForDocument']);
 
     // Sharing routes
     Route::get('/shares', [ShareController::class, 'index']);

@@ -6,7 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Activity;
 use Illuminate\Http\Request;
 
-class AuditLogController extends Controller
+class ActivityLogController extends Controller
 {
     protected function ensureAdmin(Request $request): void
     {
@@ -27,10 +27,19 @@ class AuditLogController extends Controller
 
         $query = Activity::with(['user', 'department']);
 
-        // Optional filters: user_id, subject_type, action, date_from, date_to
-        if ($request->filled('user_id')) {
-            $query->where('user_id', $request->integer('user_id'));
+        // Optional filters: user_name, subject_type, subject_id, action, date_from, date_to
+        if ($request->filled('user_name')) {
+            $name = $request->input('user_name');
+            $query->whereHas('user', function ($q) use ($name) {
+                $q->where('name', 'like', '%' . $name . '%');
+            });
         }
+
+        if ($request->filled('subject_id')) {
+            $query->where('subject_id', $request->integer('subject_id'));
+        }
+
+
 
         if ($request->filled('subject_type')) {
             $query->where('subject_type', $request->input('subject_type'));

@@ -19,7 +19,9 @@ class Department extends Model
         'logo_path',
         'theme_color',
         'is_active',
+        'is_qa',
     ];
+
 
 
     public function documents()

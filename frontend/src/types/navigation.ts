@@ -6,4 +6,4 @@ export type PageKey =
   | "departments"
   | "users"
   | "archive"
-  | "audit-logs";
+  | "activity-logs";
