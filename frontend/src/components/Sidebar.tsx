@@ -38,12 +38,21 @@ export default function Sidebar({
         </Button>
 
         <Button
+          variant={itemVariant(activePage === "qa-approvals")}
+          size="sm"
+          className="w-full justify-start"
+          onClick={() => onNavigate("qa-approvals")}
+        >
+          QA Approval Center
+        </Button>
+
+        <Button
           variant={itemVariant(activePage === "documents")}
           size="sm"
           className="w-full justify-start"
           onClick={() => onNavigate("documents")}
         >
-          Documents
+          Document Manager
         </Button>
 
         <Button
@@ -64,7 +73,7 @@ export default function Sidebar({
               className="w-full justify-start"
               onClick={() => onNavigate("departments")}
             >
-              Departments
+              Departments Manager
             </Button>
 
             <Button

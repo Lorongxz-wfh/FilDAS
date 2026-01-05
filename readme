@@ -1,0 +1,15 @@
+Laptop Only:
+
+cd backend
+php artisan serve
+cd frontend
+npm run dev
+
+
+LAN:
+
+cd backend
+php artisan serve --host=192.168.1.5 --port=8000
+cd frontend
+npm run dev:lan
+

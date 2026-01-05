@@ -10,6 +10,8 @@ const pathToPageKey = (pathname: string): PageKey => {
   switch (pathname) {
     case "/dashboard":
       return "dashboard";
+    case "/qa-approvals":
+      return "qa-approvals";
     case "/documents":
       return "documents";
     case "/shared":
@@ -50,6 +52,7 @@ function AppLayout() {
 const handleNavigate = (page: PageKey) => {
   const pageToPath: Record<PageKey, string> = {
     dashboard: "/dashboard",
+    "qa-approvals": "/qa-approvals",
     documents: "/documents",
     shared: "/shared",
     departments: "/departments",

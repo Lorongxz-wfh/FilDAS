@@ -50,6 +50,12 @@ export default function QaApprovalCenterPage() {
   const [comments, setComments] = useState<CommentDto[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [newComment, setNewComment] = useState("");
+  const [actionLoading, setActionLoading] = useState<
+    "approve" | "reject" | null
+  >(null);
+
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   // role flags
   const isSuperAdmin = currentUser?.role?.name === "Super Admin";
@@ -98,6 +104,23 @@ export default function QaApprovalCenterPage() {
     }
   };
 
+  const loadPreview = async (docId: number) => {
+    setPreviewLoading(true);
+    setPreviewUrl(null);
+    try {
+      const res = await api.get<{ stream_url?: string }>(
+        `/documents/${docId}/preview`
+      );
+      const url = (res.data as any).stream_url || (res.data as any).url || null;
+      setPreviewUrl(url);
+    } catch (e) {
+      console.error(e);
+      setPreviewUrl(null);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
   const handleAddComment = async () => {
     if (!selectedDoc || !newComment.trim()) return;
     try {
@@ -117,31 +140,38 @@ export default function QaApprovalCenterPage() {
     loadDocs();
   }, []);
 
-  const handleApprove = async (id: number) => {
+  const handleApprove = async () => {
+    if (!selectedDoc || actionLoading) return;
+    setActionLoading("approve");
     try {
-      await api.post(`/documents/${id}/approve`);
+      await api.post(`/documents/${selectedDoc.id}/approve`);
       await loadDocs();
-      if (selectedDoc && selectedDoc.id === id) {
-        setSelectedDoc({ ...selectedDoc, status: "approved" });
-      }
+      setSelectedDoc((prev) => (prev ? { ...prev, status: "approved" } : prev));
     } catch (e) {
       console.error(e);
       alert("Failed to approve document.");
+    } finally {
+      setActionLoading(null);
     }
   };
 
-  const handleReject = async (id: number) => {
+  const handleReject = async () => {
+    if (!selectedDoc || actionLoading) return;
     const reason =
       window.prompt("Reason for rejection (optional):") ?? undefined;
+    setActionLoading("reject");
     try {
-      await api.post(`/documents/${id}/reject`, reason ? { reason } : {});
+      await api.post(
+        `/documents/${selectedDoc.id}/reject`,
+        reason ? { reason } : {}
+      );
       await loadDocs();
-      if (selectedDoc && selectedDoc.id === id) {
-        setSelectedDoc({ ...selectedDoc, status: "rejected" });
-      }
+      setSelectedDoc((prev) => (prev ? { ...prev, status: "rejected" } : prev));
     } catch (e) {
       console.error(e);
       alert("Failed to reject document.");
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -179,6 +209,7 @@ export default function QaApprovalCenterPage() {
                   onClick={() => {
                     setSelectedDoc(d);
                     loadComments(d.id);
+                    loadPreview(d.id);
                   }}
                 >
                   <td className="py-2 pr-3 text-slate-100">
@@ -190,7 +221,19 @@ export default function QaApprovalCenterPage() {
                   <td className="py-2 pr-3 text-slate-300">
                     {d.uploadedBy?.name ?? "—"}
                   </td>
-                  <td className="py-2 pr-3 text-slate-300">{d.status}</td>
+                  <td className="py-2 pr-3 text-xs">
+                    <span
+                      className={
+                        d.status === "approved"
+                          ? "inline-flex rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400"
+                          : d.status === "rejected"
+                          ? "inline-flex rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-medium text-rose-400"
+                          : "inline-flex rounded-full bg-slate-500/20 px-2 py-0.5 text-[10px] font-medium text-slate-300"
+                      }
+                    >
+                      {d.status || "pending"}
+                    </span>
+                  </td>
                   <td className="py-2 pr-3 text-right">
                     {isSuperAdmin || isQaAdmin ? (
                       <>
@@ -198,22 +241,34 @@ export default function QaApprovalCenterPage() {
                           size="xs"
                           variant="primary"
                           className="mr-2"
+                          disabled={actionLoading !== null}
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleApprove(d.id);
+                            setSelectedDoc(d);
+                            loadComments(d.id);
+                            loadPreview(d.id);
+                            handleApprove();
                           }}
                         >
-                          Approve
+                          {actionLoading === "approve"
+                            ? "Approving..."
+                            : "Approve"}
                         </Button>
                         <Button
                           size="xs"
                           variant="secondary"
+                          disabled={actionLoading !== null}
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleReject(d.id);
+                            setSelectedDoc(d);
+                            loadComments(d.id);
+                            loadPreview(d.id);
+                            handleReject();
                           }}
                         >
-                          Reject
+                          {actionLoading === "reject"
+                            ? "Rejecting..."
+                            : "Reject"}
                         </Button>
                       </>
                     ) : (
@@ -234,36 +289,68 @@ export default function QaApprovalCenterPage() {
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60">
           <div className="flex h-[80vh] w-full max-w-5xl flex-col rounded-lg border border-slate-700 bg-slate-900 shadow-xl">
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+            <div className="flex items-start justify-between border-b border-slate-800 px-4 py-3">
               <div>
-                <div className="text-sm font-semibold text-slate-100">
+                <h2 className="text-sm font-semibold text-slate-100">
                   {selectedDoc.title || selectedDoc.original_filename}
-                </div>
-                <div className="text-[11px] text-slate-400">
-                  {selectedDoc.department?.name ?? "No department"}
-                </div>
+                </h2>
+                <p className="text-[11px] text-slate-400">
+                  {selectedDoc.department?.name || "No department"}
+                </p>
               </div>
-              <Button
-                size="xs"
-                variant="ghost"
-                onClick={() => {
-                  setSelectedDoc(null);
-                  setComments([]);
-                  setNewComment("");
-                }}
-              >
-                Close
-              </Button>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  onClick={() => {
+                    window.location.href = `/documents?docId=${selectedDoc.id}`;
+                  }}
+                >
+                  View in Documents
+                </Button>
+
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => {
+                    setSelectedDoc(null);
+                    setComments([]);
+                    setNewComment("");
+                    setPreviewUrl(null);
+                    setPreviewLoading(false);
+                  }}
+                >
+                  Close
+                </Button>
+              </div>
             </div>
 
             <div className="flex flex-1 flex-col md:flex-row">
               {/* Left: preview placeholder */}
-              <div className="flex-1 border-b border-slate-800 p-3 md:border-b-0 md:border-r">
+              <div className="flex-1 border-b border-slate-800 p-3 md:border-b-0 md:border-r flex flex-col">
                 <div className="mb-2 text-xs font-semibold text-slate-300">
                   Preview
                 </div>
-                <div className="flex h-full items-center justify-center rounded-md border border-dashed border-slate-700 bg-slate-950/40 text-[11px] text-slate-500">
-                  Preview coming soon
+
+                <div className="flex-1">
+                  <div className="flex h-full items-center justify-center rounded-md border border-slate-700 bg-slate-950/40 p-2">
+                    {previewLoading ? (
+                      <div className="flex h-full w-full items-center justify-center">
+                        <div className="h-6 w-6 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
+                      </div>
+                    ) : previewUrl ? (
+                      <iframe
+                        src={previewUrl}
+                        className="h-full w-full rounded-md"
+                        title="Document preview"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-[11px] text-slate-500">
+                        No preview available.
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -280,16 +367,20 @@ export default function QaApprovalCenterPage() {
                       <Button
                         size="xs"
                         variant="primary"
-                        onClick={() => handleApprove(selectedDoc.id)}
+                        onClick={handleApprove}
+                        disabled={actionLoading !== null}
                       >
-                        Approve
+                        {actionLoading === "approve"
+                          ? "Approving..."
+                          : "Approve"}
                       </Button>
                       <Button
                         size="xs"
                         variant="secondary"
-                        onClick={() => handleReject(selectedDoc.id)}
+                        onClick={handleReject}
+                        disabled={actionLoading !== null}
                       >
-                        Reject
+                        {actionLoading === "reject" ? "Rejecting..." : "Reject"}
                       </Button>
                     </div>
                   ) : null}

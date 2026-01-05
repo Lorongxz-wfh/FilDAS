@@ -7,10 +7,13 @@ import { Card } from "../components/ui/Card";
 import Modal from "../components/Modal";
 import { notify } from "../lib/notify";
 
+const FILE_BASE_URL = import.meta.env.VITE_FILE_BASE_URL;
+
 const getDepartmentLogoUrl = (dept: Department) =>
   dept.logo_path
-    ? `http://localhost:8000/storage/fildas_assets/${dept.logo_path}`
+    ? `${FILE_BASE_URL}/storage/fildas_assets/${dept.logo_path}`
     : null;
+
 
 type Department = {
   id: number;
