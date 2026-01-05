@@ -164,9 +164,9 @@ class FolderController extends Controller
         $user = $request->user();
 
         // Same model as move/copy: super admin, same dept owner, or shared editor
-        $isSuper  = $user->isAdmin() && $user->role?->name === 'super_admin';
+        $roleName = $user->role->name ?? '';
+        $isSuper  = $roleName === 'Super Admin';
         $sameDept = $folder->department_id === $user->department_id;
-
         $sharePerm      = $this->getFolderSharePermissionForUser($folder, $user);
         $isSharedEditor = $sharePerm === 'editor';
 
@@ -225,10 +225,12 @@ class FolderController extends Controller
     {
         $user = $request->user();
 
-        $isSuper  = $user->isAdmin() && $user->role?->name === 'super_admin';
+        $roleName = $user->role->name ?? '';
+        $isSuper  = $roleName === 'Super Admin';
         $sameDept = $folder->department_id === $user->department_id;
         $sharePerm      = $this->getFolderSharePermissionForUser($folder, $user);
         $isSharedEditor = $sharePerm === 'editor';
+
 
         // Only super, same-dept owner, or shared editor can archive
         if (!$isSuper && !$sameDept && !$isSharedEditor) {
@@ -259,10 +261,17 @@ class FolderController extends Controller
     {
         $user = $request->user();
 
-        $isSuper  = $user->isAdmin() && $user->role?->name === 'super_admin';
+        $roleName = $user->role->name ?? '';
+        $isSuper  = $roleName === 'Super Admin';
+        Log::info('FOLDER RESTORE DEBUG', [
+            'user_id'   => $user->id,
+            'role_name' => $roleName,
+            'is_super'  => $isSuper,
+        ]);
         $sameDept = $folder->department_id === $user->department_id;
         $sharePerm      = $this->getFolderSharePermissionForUser($folder, $user);
         $isSharedEditor = $sharePerm === 'editor';
+
 
         // Same permissions as archive/delete
         if (!$isSuper && !$sameDept && !$isSharedEditor) {
@@ -293,10 +302,12 @@ class FolderController extends Controller
     {
         $user = $request->user();
 
-        $isSuper  = $user->isAdmin() && $user->role?->name === 'super_admin';
+        $roleName = $user->role->name ?? '';
+        $isSuper  = $roleName === 'Super Admin';
         $sameDept = $folder->department_id === $user->department_id;
         $sharePerm      = $this->getFolderSharePermissionForUser($folder, $user);
         $isSharedEditor = $sharePerm === 'editor';
+
 
         // Only super, same-dept owner, or shared editor can delete
         if (!$isSuper && !$sameDept && !$isSharedEditor) {
@@ -529,12 +540,12 @@ class FolderController extends Controller
             'target_department_id' => 'nullable|exists:departments,id',
         ]);
 
-        $isSuper  = $user->isAdmin() && $user->role?->name === 'super_admin';
+        $roleName = $user->role->name ?? '';
+        $isSuper  = $roleName === 'Super Admin';
         $sameDept = $folder->department_id === $user->department_id;
-
-        // NEW: shared permission
         $sharePerm      = $this->getFolderSharePermissionForUser($folder, $user);
         $isSharedEditor = $sharePerm === 'editor';
+
 
         // Must be super admin, owner in same dept, or shared editor
         if (!$isSuper && !$sameDept && !$isSharedEditor) {
@@ -599,12 +610,12 @@ class FolderController extends Controller
             'target_folder_id' => 'nullable|exists:folders,id',
         ]);
 
-        $isSuper  = $user->isAdmin() && $user->role?->name === 'super_admin';
+        $roleName = $user->role->name ?? '';
+        $isSuper  = $roleName === 'Super Admin';
         $sameDept = $folder->department_id === $user->department_id;
-
-        // NEW: shared permission
         $sharePerm      = $this->getFolderSharePermissionForUser($folder, $user);
         $isSharedEditor = $sharePerm === 'editor';
+
 
         if (!$isSuper && !$sameDept && !$isSharedEditor) {
             return response()->json(['error' => 'Forbidden'], 403);

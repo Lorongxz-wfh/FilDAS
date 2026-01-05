@@ -128,9 +128,9 @@ class DocumentController extends Controller
         // - Super Admin: all archived documents.
         // - Admin: archived documents in their own department.
         // - Staff: archived documents they own or uploaded.
-        $roleName     = $user->role->name ?? '';
-        $isSuperAdmin = $roleName === 'Super Admin';
-        $isAdmin      = $roleName === 'Admin';
+        $isSuperAdmin = $user->isSuperAdmin();
+        $isAdmin      = $user->isAdmin();
+
 
         if ($isSuperAdmin) {
             // no extra filter
@@ -679,7 +679,7 @@ class DocumentController extends Controller
             return $sharePerm;
         }
 
-        $isSuper  = $user->isAdmin() && $user->role?->name === 'super_admin';
+        $isSuper  = $user->isSuperAdmin();
         $sameDept = $document->department_id === $user->department_id;
 
         if ($isSuper) {
@@ -689,6 +689,7 @@ class DocumentController extends Controller
         if ($sameDept) {
             return 'contributor';
         }
+
 
         return 'viewer';
     }
@@ -703,7 +704,8 @@ class DocumentController extends Controller
             'target_department_id' => 'nullable|exists:departments,id',
         ]);
 
-        $isSuper  = $user->isAdmin() && $user->role?->name === 'super_admin';
+        $isSuper = $user->isSuperAdmin();
+
         $sameDept = $document->department_id === $user->department_id;
 
         $sharePerm            = $this->getDocumentSharePermissionForUser($document, $user);
@@ -791,7 +793,8 @@ class DocumentController extends Controller
             'target_folder_id' => 'nullable|exists:folders,id',
         ]);
 
-        $isSuper  = $user->isAdmin() && $user->role?->name === 'super_admin';
+        $isSuper = $user->isSuperAdmin();
+
         $sameDept = $document->department_id === $user->department_id;
 
         $sharePerm           = $this->getDocumentSharePermissionForUser($document, $user);

@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/Button";
+import { statusBadgeClass } from "../../../components/documents/DetailsPanelSections";
 
 type Role = { id: number; name: string };
 type Department = { id: number; name: string; is_qa?: boolean };
@@ -40,16 +41,38 @@ type CommentDto = {
   user: { id: number; name: string; email: string } | null;
 };
 
+type QaActivityEntry = {
+  id: number;
+  action: string;
+  details: string | null;
+  created_at: string;
+  user: { id: number; name: string; email: string } | null;
+};
+
 export default function QaApprovalCenterPage() {
   const [docs, setDocs] = useState<QaDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [commentError, setCommentError] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+
+  // status filter: pending | approved | rejected | all
+  const [statusFilter, setStatusFilter] = useState<
+    "pending" | "approved" | "rejected" | "all"
+  >("pending");
 
   const [selectedDoc, setSelectedDoc] = useState<QaDoc | null>(null);
   const [comments, setComments] = useState<CommentDto[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [newComment, setNewComment] = useState("");
+  const [commentSubmitting, setCommentSubmitting] = useState(false);
+
+  // QA history (activity) for the selected document
+  const [qaHistory, setQaHistory] = useState<QaActivityEntry[]>([]);
+  const [qaHistoryLoading, setQaHistoryLoading] = useState(false);
+
+  // approve / reject button loading state
   const [actionLoading, setActionLoading] = useState<
     "approve" | "reject" | null
   >(null);
@@ -59,8 +82,40 @@ export default function QaApprovalCenterPage() {
 
   // role flags
   const isSuperAdmin = currentUser?.role?.name === "Super Admin";
+  const isAdmin =
+    currentUser?.role?.name === "Admin" ||
+    currentUser?.role?.name === "Super Admin";
   const isQa = !!currentUser?.department?.is_qa;
   const isQaAdmin = isQa && currentUser?.role?.name === "Admin";
+
+  // permissions: what current user can do in QA
+  const canApproveReject = isSuperAdmin || isQaAdmin;
+
+  // can comment in QA modal:
+  // - any QA user (staff/admin)
+  // - document owner/uploader
+  // - admin from uploader's department
+  const isQaStaff = isQa; // includes QA Admin + QA Staff
+  const canCommentOnSelected = (() => {
+    if (!selectedDoc || !currentUser) return false;
+
+    const isUploader =
+      selectedDoc.uploadedBy?.id &&
+      selectedDoc.uploadedBy.id === currentUser.id;
+
+    const isDeptAdminForUploader =
+      isAdmin &&
+      selectedDoc.department?.id &&
+      currentUser.department?.id &&
+      selectedDoc.department.id === currentUser.department.id;
+
+    if (isSuperAdmin) return true;
+    if (isQaStaff) return true;
+    if (isUploader) return true;
+    if (isDeptAdminForUploader) return true;
+
+    return false;
+  })();
 
   // load user from localStorage
   useEffect(() => {
@@ -80,7 +135,10 @@ export default function QaApprovalCenterPage() {
     setError(null);
     try {
       const res = await api.get<PagedResponse>("/qa/approvals", {
-        params: { status: "pending", per_page: 50 },
+        params: {
+          status: statusFilter,
+          per_page: 50,
+        },
       });
       setDocs(res.data.data ?? (res.data as any).data ?? []);
     } catch (e: any) {
@@ -104,6 +162,30 @@ export default function QaApprovalCenterPage() {
     }
   };
 
+  const loadQaHistory = async (docId: number) => {
+    setQaHistoryLoading(true);
+    try {
+      // Assumes backend route: GET /documents/{id}/activity
+      // which returns a list of { id, action, details, created_at, user }.
+      const res = await api.get<QaActivityEntry[]>(
+        `/documents/${docId}/activity`
+      );
+
+      // Optionally filter to QA-related actions only
+      const qaActions = ["uploaded", "approved", "rejected"];
+      const filtered = res.data.filter((entry) =>
+        qaActions.includes(entry.action)
+      );
+
+      setQaHistory(filtered);
+    } catch (e) {
+      console.error(e);
+      setQaHistory([]);
+    } finally {
+      setQaHistoryLoading(false);
+    }
+  };
+
   const loadPreview = async (docId: number) => {
     setPreviewLoading(true);
     setPreviewUrl(null);
@@ -122,7 +204,15 @@ export default function QaApprovalCenterPage() {
   };
 
   const handleAddComment = async () => {
-    if (!selectedDoc || !newComment.trim()) return;
+    if (
+      !selectedDoc ||
+      !newComment.trim() ||
+      commentSubmitting ||
+      !canCommentOnSelected
+    )
+      return;
+    setCommentSubmitting(true);
+    setCommentError(null);
     try {
       const res = await api.post<CommentDto>(
         `/documents/${selectedDoc.id}/comments`,
@@ -130,26 +220,38 @@ export default function QaApprovalCenterPage() {
       );
       setComments((prev) => [...prev, res.data]);
       setNewComment("");
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert("Failed to add comment.");
+      const msg =
+        e?.response?.data?.error ||
+        e?.response?.data?.message ||
+        "Failed to add comment.";
+      setCommentError(msg);
+    } finally {
+      setCommentSubmitting(false);
     }
   };
 
   useEffect(() => {
     loadDocs();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter]);
 
   const handleApprove = async () => {
     if (!selectedDoc || actionLoading) return;
     setActionLoading("approve");
+    setActionError(null);
     try {
       await api.post(`/documents/${selectedDoc.id}/approve`);
       await loadDocs();
       setSelectedDoc((prev) => (prev ? { ...prev, status: "approved" } : prev));
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert("Failed to approve document.");
+      const msg =
+        e?.response?.data?.error ||
+        e?.response?.data?.message ||
+        "Failed to approve document.";
+      setActionError(msg);
     } finally {
       setActionLoading(null);
     }
@@ -160,6 +262,7 @@ export default function QaApprovalCenterPage() {
     const reason =
       window.prompt("Reason for rejection (optional):") ?? undefined;
     setActionLoading("reject");
+    setActionError(null);
     try {
       await api.post(
         `/documents/${selectedDoc.id}/reject`,
@@ -167,9 +270,13 @@ export default function QaApprovalCenterPage() {
       );
       await loadDocs();
       setSelectedDoc((prev) => (prev ? { ...prev, status: "rejected" } : prev));
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert("Failed to reject document.");
+      const msg =
+        e?.response?.data?.error ||
+        e?.response?.data?.message ||
+        "Failed to reject document.";
+      setActionError(msg);
     } finally {
       setActionLoading(null);
     }
@@ -181,7 +288,27 @@ export default function QaApprovalCenterPage() {
         QA Approval Center
       </h1>
 
-      {error && <p className="mb-2 text-xs text-red-400">{error}</p>}
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+        {error && <p className="text-xs text-red-400">{error}</p>}
+
+        <div className="ml-auto flex items-center gap-2">
+          <span className="text-[11px] text-slate-400">Status:</span>
+          <select
+            className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            value={statusFilter}
+            onChange={(e) =>
+              setStatusFilter(
+                e.target.value as "pending" | "approved" | "rejected" | "all"
+              )
+            }
+          >
+            <option value="pending">Pending only</option>
+            <option value="approved">Approved only</option>
+            <option value="rejected">Rejected only</option>
+            <option value="all">All statuses</option>
+          </select>
+        </div>
+      </div>
 
       {loading ? (
         <div className="flex h-40 items-center justify-center">
@@ -198,6 +325,8 @@ export default function QaApprovalCenterPage() {
                 <th className="py-2 pr-3">Department</th>
                 <th className="py-2 pr-3">Uploaded by</th>
                 <th className="py-2 pr-3">Status</th>
+                <th className="py-2 pr-3">Approved by</th>
+                <th className="py-2 pr-3">Approved at</th>
                 <th className="py-2 pr-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -208,8 +337,11 @@ export default function QaApprovalCenterPage() {
                   className="cursor-pointer hover:bg-slate-800/50"
                   onClick={() => {
                     setSelectedDoc(d);
+                    setActionError(null);
+                    setCommentError(null);
                     loadComments(d.id);
                     loadPreview(d.id);
+                    loadQaHistory(d.id);
                   }}
                 >
                   <td className="py-2 pr-3 text-slate-100">
@@ -222,20 +354,20 @@ export default function QaApprovalCenterPage() {
                     {d.uploadedBy?.name ?? "—"}
                   </td>
                   <td className="py-2 pr-3 text-xs">
-                    <span
-                      className={
-                        d.status === "approved"
-                          ? "inline-flex rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400"
-                          : d.status === "rejected"
-                          ? "inline-flex rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-medium text-rose-400"
-                          : "inline-flex rounded-full bg-slate-500/20 px-2 py-0.5 text-[10px] font-medium text-slate-300"
-                      }
-                    >
+                    <span className={statusBadgeClass(d.status)}>
                       {d.status || "pending"}
                     </span>
                   </td>
+                  <td className="py-2 pr-3 text-slate-300">
+                    {d.approved_by ? `User #${d.approved_by}` : "—"}
+                  </td>
+                  <td className="py-2 pr-3 text-slate-400">
+                    {d.approved_at
+                      ? new Date(d.approved_at).toLocaleString()
+                      : "—"}
+                  </td>
                   <td className="py-2 pr-3 text-right">
-                    {isSuperAdmin || isQaAdmin ? (
+                    {canApproveReject ? (
                       <>
                         <Button
                           size="xs"
@@ -247,6 +379,7 @@ export default function QaApprovalCenterPage() {
                             setSelectedDoc(d);
                             loadComments(d.id);
                             loadPreview(d.id);
+                            loadQaHistory(d.id);
                             handleApprove();
                           }}
                         >
@@ -263,6 +396,7 @@ export default function QaApprovalCenterPage() {
                             setSelectedDoc(d);
                             loadComments(d.id);
                             loadPreview(d.id);
+                            loadQaHistory(d.id);
                             handleReject();
                           }}
                         >
@@ -319,6 +453,11 @@ export default function QaApprovalCenterPage() {
                     setNewComment("");
                     setPreviewUrl(null);
                     setPreviewLoading(false);
+                    setQaHistory([]);
+                    setQaHistoryLoading(false);
+                    setActionError(null);
+                    setCommentError(null);
+                    setCommentSubmitting(false);
                   }}
                 >
                   Close
@@ -358,11 +497,14 @@ export default function QaApprovalCenterPage() {
               <div className="flex w-full max-w-md flex-col p-3">
                 {/* Status + actions */}
                 <div className="mb-3 flex items-center justify-between">
-                  <span className="inline-flex rounded-full border border-slate-600 px-2 py-0.5 text-[11px] text-slate-200">
-                    Status: {selectedDoc.status}
+                  <span className="inline-flex items-center gap-1 text-[11px] text-slate-200">
+                    <span className="text-slate-400">Status:</span>
+                    <span className={statusBadgeClass(selectedDoc.status)}>
+                      {selectedDoc.status || "pending"}
+                    </span>
                   </span>
 
-                  {isSuperAdmin || isQaAdmin ? (
+                  {canApproveReject ? (
                     <div className="flex gap-2">
                       <Button
                         size="xs"
@@ -386,6 +528,12 @@ export default function QaApprovalCenterPage() {
                   ) : null}
                 </div>
 
+                {actionError && (
+                  <div className="mb-2 text-[11px] text-rose-400">
+                    {actionError}
+                  </div>
+                )}
+
                 {/* Metadata */}
                 <div className="mb-3 space-y-1 text-[11px] text-slate-300">
                   <div>
@@ -402,11 +550,56 @@ export default function QaApprovalCenterPage() {
                   </div>
                 </div>
 
+                {/* QA history */}
+                <div className="mb-3 border-t border-slate-800 pt-2">
+                  <div className="mb-1 text-xs font-semibold text-slate-300">
+                    QA history
+                  </div>
+                  <div className="max-h-32 overflow-y-auto rounded-md border border-slate-800 bg-slate-950/40 p-2">
+                    {qaHistoryLoading ? (
+                      <div className="py-2 text-center text-[11px] text-slate-500">
+                        Loading QA history...
+                      </div>
+                    ) : qaHistory.length === 0 ? (
+                      <div className="py-2 text-center text-[11px] text-slate-500">
+                        No QA events yet.
+                      </div>
+                    ) : (
+                      qaHistory.map((entry) => (
+                        <div
+                          key={entry.id}
+                          className="mb-1 rounded bg-slate-800/60 px-2 py-1 text-[11px]"
+                        >
+                          <div className="text-[10px] text-slate-400">
+                            {entry.user?.name ?? "System"} •{" "}
+                            {new Date(entry.created_at).toLocaleString()}
+                          </div>
+                          <div className="text-slate-100">
+                            {entry.action === "approved" && "Approved"}
+                            {entry.action === "rejected" && "Rejected"}
+                            {entry.action === "uploaded" && "Uploaded"}
+                            {entry.action !== "approved" &&
+                              entry.action !== "rejected" &&
+                              entry.action !== "uploaded" &&
+                              entry.action}
+                            {entry.details ? ` — ${entry.details}` : ""}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
                 {/* Comments */}
                 <div className="flex flex-1 flex-col border-t border-slate-800 pt-2">
                   <div className="mb-1 text-xs font-semibold text-slate-300">
                     Comments
                   </div>
+                  {commentError && (
+                    <div className="mb-1 text-[11px] text-rose-400">
+                      {commentError}
+                    </div>
+                  )}
 
                   <div className="flex-1 overflow-y-auto rounded-md border border-slate-800 bg-slate-950/40 p-2">
                     {commentsLoading ? (
@@ -436,19 +629,27 @@ export default function QaApprovalCenterPage() {
                   </div>
 
                   <div className="mt-2 flex items-center gap-2">
-                    <input
-                      className="flex-1 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
-                      placeholder="Add a comment..."
-                      value={newComment}
-                      onChange={(e) => setNewComment(e.target.value)}
-                    />
-                    <Button
-                      size="xs"
-                      disabled={!newComment.trim()}
-                      onClick={handleAddComment}
-                    >
-                      Send
-                    </Button>
+                    {canCommentOnSelected ? (
+                      <>
+                        <input
+                          className="flex-1 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+                          placeholder="Add a comment..."
+                          value={newComment}
+                          onChange={(e) => setNewComment(e.target.value)}
+                        />
+                        <Button
+                          size="xs"
+                          disabled={!newComment.trim() || commentSubmitting}
+                          onClick={handleAddComment}
+                        >
+                          {commentSubmitting ? "Sending..." : "Send"}
+                        </Button>
+                      </>
+                    ) : (
+                      <p className="text-[11px] text-slate-500">
+                        You can view comments but not add new ones.
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>

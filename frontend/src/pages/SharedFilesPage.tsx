@@ -38,14 +38,14 @@ type LayoutContext = {
     id: number;
     name: string;
     email: string;
-    department_id: number | null; // add this line
+    department_id: number | null;
+    role?: { id: number; name: string } | null;
   };
   isAdmin: boolean;
 };
 
 export default function SharedFilesPage() {
   // ---------- context / hooks ----------
-
   const { user, isAdmin } = useOutletContext<LayoutContext>();
 
   // When true, auto-polling is paused to avoid overlapping with shared mutations.
@@ -373,27 +373,27 @@ export default function SharedFilesPage() {
   };
 
   const handleSharedMoveCopyConfirm = async (targetFolderId: number | null) => {
-    console.log("handleSharedMoveCopyConfirm", {
-      targetFolderId,
-      selectedItem,
-      sharedPendingAction,
-    });
+    // console.log("handleSharedMoveCopyConfirm", {
+    //   targetFolderId,
+    //   selectedItem,
+    //   sharedPendingAction,
+    // });
     if (!selectedItem || !sharedPendingAction) return;
 
     setIsBusy(true);
     try {
       if (selectedItem.kind === "file") {
         const doc = selectedItem.data as DocumentRow;
-        console.log("MOVING/COPYING FILE", { docId: doc.id, targetFolderId });
+        // console.log("MOVING/COPYING FILE", { docId: doc.id, targetFolderId });
         await api.post(`/documents/${doc.id}/${sharedPendingAction}`, {
           target_folder_id: targetFolderId,
         });
       } else {
         const folder = selectedItem.data as SharedFolder;
-        console.log("MOVING/COPYING FOLDER", {
-          folderId: folder.id,
-          targetFolderId,
-        });
+        // console.log("MOVING/COPYING FOLDER", {
+        //   folderId: folder.id,
+        //   targetFolderId,
+        // });
         await api.post(`/folders/${folder.id}/${sharedPendingAction}`, {
           target_folder_id: targetFolderId,
         });
@@ -986,7 +986,7 @@ export default function SharedFilesPage() {
                           className="group cursor-pointer"
                           onClick={(e) => {
                             e.preventDefault();
-                            console.log("Selected doc (grid)", doc);
+                            // console.log("Selected doc (grid)", doc);
                             setSelectedItem({ kind: "file", data: doc as any });
                             setDetailsOpen(true);
                           }}
@@ -1135,11 +1135,11 @@ export default function SharedFilesPage() {
                             }`}
                             onClick={(e) => {
                               e.preventDefault();
-                              console.log("Selected doc (list)", doc);
-                              setSelectedItem({
-                                kind: "file",
-                                data: doc as any,
-                              });
+                              // console.log("Selected doc (list)", doc);
+                              // setSelectedItem({
+                              //   kind: "file",
+                              //   data: doc as any,
+                              // });
                               setDetailsOpen(true);
                             }}
                             onDoubleClick={(e) => {
@@ -1184,6 +1184,13 @@ export default function SharedFilesPage() {
               canEditAccess={canEditAccess}
               width={detailsWidth}
               onResizeStart={handleDetailsResizeStart}
+              currentUser={{
+                id: user.id,
+                role: user.role ?? null,
+                department: user.department_id
+                  ? { id: user.department_id, is_qa: false }
+                  : null,
+              }}
             />
           </section>
         </div>

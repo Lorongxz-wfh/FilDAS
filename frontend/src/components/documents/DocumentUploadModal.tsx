@@ -44,15 +44,61 @@ export function DocumentUploadModal({
     e.preventDefault();
     setIsDragging(false);
 
-    const droppedFiles = Array.from(e.dataTransfer.files);
-    addFiles(droppedFiles);
+    const items = Array.from(e.dataTransfer.items || []);
+    const files: File[] = [];
+    let hasDirectory = false;
+
+    for (const item of items) {
+      if (item.kind !== "file") continue;
+      const entry = (item as any).webkitGetAsEntry?.();
+      if (entry && entry.isDirectory) {
+        hasDirectory = true;
+      }
+      const file = item.getAsFile();
+      if (file) {
+        files.push(file);
+      }
+    }
+
+    // Enforce mode
+    if (mode === "files" && hasDirectory) {
+      alert("This area only accepts files. Use “Upload folder” for folders.");
+      return;
+    }
+
+    if (mode === "folder" && !hasDirectory) {
+      alert("This area expects a folder. Use “Upload files” for single files.");
+      return;
+    }
+
+    addFiles(files);
   };
 
   const handleBrowse = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const selectedFiles = Array.from(e.target.files);
-      addFiles(selectedFiles);
+    if (!e.target.files) return;
+
+    const selectedFiles = Array.from(e.target.files);
+    const hasDirectory =
+      mode === "folder" &&
+      selectedFiles.some(
+        (f) =>
+          !!(f as any).webkitRelativePath &&
+          (f as any).webkitRelativePath.includes("/")
+      );
+
+    if (mode === "files" && hasDirectory) {
+      alert("This picker only accepts files. Use “Browse folder” instead.");
+      return;
     }
+
+    if (mode === "folder" && !hasDirectory) {
+      alert(
+        "This picker expects a folder. Use “Browse files” for single files."
+      );
+      return;
+    }
+
+    addFiles(selectedFiles);
   };
 
   const addFiles = (newFiles: File[]) => {

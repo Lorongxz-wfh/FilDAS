@@ -25,7 +25,7 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
       // let App know login succeeded (it will save token + user and set isAuthenticated)
       onLoginSuccess(token, user);
 
-      console.log("Logged in user:", user);
+      // console.log("Logged in user:", user);
 
       // go to dashboard
       navigate("/overview", { replace: true });

@@ -70,7 +70,7 @@ function App() {
   }
 
   // DEBUG
-  console.log("App render auth state:", { isAuthenticated, loading });
+  // console.log("App render auth state:", { isAuthenticated, loading });
 
   // called by LoginPage when login succeeds
   const handleLoginSuccess = (token: string, user: any) => {

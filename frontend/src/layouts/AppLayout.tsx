@@ -91,6 +91,7 @@ const handleNavigate = (page: PageKey) => {
           onNavigate={handleNavigate}
           isAdmin={isAdminOrSuper}
           isSuperAdmin={isSuperAdmin}
+          isQa={false}
         />
 
         <main className="flex-1 overflow-auto p-6">

@@ -10,6 +10,12 @@ import {
   DepartmentDetails,
 } from "./DetailsPanelSections";
 
+type CurrentUser = {
+  id: number;
+  role?: { name: string } | null;
+  department?: { id: number; is_qa?: boolean } | null;
+};
+
 type Props = {
   open: boolean;
   selectedItem: Item | null;
@@ -21,6 +27,7 @@ type Props = {
   onAccessChanged?: () => void | Promise<void>;
   width?: number;
   onResizeStart?: () => void;
+  currentUser: CurrentUser | null;
 };
 
 type ShareRecord = {
@@ -64,6 +71,7 @@ export function DetailsPanel({
   onAccessChanged,
   width = 320,
   onResizeStart,
+  currentUser,
 }: Props) {
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<
@@ -116,6 +124,51 @@ export function DetailsPanel({
   const isFile = selectedItem?.kind === "file";
   const isFolder = selectedItem?.kind === "folder";
 
+  const fileStatus: string | null = isFile
+    ? (selectedItem!.data as any).status ?? null
+    : null;
+  const isApprovedFile = isFile && fileStatus === "approved";
+
+  const canCommentForSelectedFile = (() => {
+    if (!selectedItem || selectedItem.kind !== "file" || !currentUser) {
+      return false;
+    }
+
+    const doc = selectedItem.data as DocumentRow & {
+      uploadedBy?: { id: number; name: string } | null;
+      department?: { id: number; name: string } | null;
+      department_id?: number | null;
+    };
+
+    const roleName = currentUser.role?.name;
+    const isSuperAdmin = roleName === "Super Admin";
+    const isAdmin = roleName === "Admin";
+    const isQa = !!currentUser.department?.is_qa;
+
+    const docDeptId =
+      (doc.department as any)?.id ?? (doc as any).department_id ?? null;
+    const userDeptId = currentUser.department?.id ?? null;
+
+    const isUploader =
+      !!doc.uploadedBy?.id && doc.uploadedBy.id === currentUser.id;
+
+    const isSameDeptAdmin =
+      isAdmin && !!docDeptId && !!userDeptId && docDeptId === userDeptId;
+
+    // Can comment:
+    // - Super Admin (any dept)
+    // - Any QA
+    // - Uploader
+    // - Admin from same department
+    if (isSuperAdmin) return true;
+    if (isQa) return true;
+    if (isUploader) return true;
+    if (isSameDeptAdmin) return true;
+
+    // Plain staff (even same dept) cannot comment.
+    return false;
+  })();
+
   return (
     <div className="flex h-full shrink-0 items-stretch">
       <div
@@ -148,16 +201,18 @@ export function DetailsPanel({
             >
               Activity
             </button>
-            <button
-              className={
-                activeTab === "sharing"
-                  ? "border-b border-sky-500 pb-1 text-slate-100"
-                  : "pb-1 text-slate-400 hover:text-slate-200"
-              }
-              onClick={() => setActiveTab("sharing")}
-            >
-              Sharing
-            </button>
+            {(!isFile || isApprovedFile) && (
+              <button
+                className={
+                  activeTab === "sharing"
+                    ? "border-b border-sky-500 pb-1 text-slate-100"
+                    : "pb-1 text-slate-400 hover:text-slate-200"
+                }
+                onClick={() => setActiveTab("sharing")}
+              >
+                Sharing
+              </button>
+            )}
           </div>
           <IconButton size="xs" variant="ghost" onClick={onClose}>
             ✕
@@ -178,6 +233,7 @@ export function DetailsPanel({
                 formatSize={formatSize}
                 status={(selectedItem.data as any).status}
                 onDescriptionSaved={onAccessChanged}
+                canComment={canCommentForSelectedFile}
               />
             ) : isFolder ? (
               <FolderDetails
@@ -189,6 +245,10 @@ export function DetailsPanel({
             )
           ) : activeTab === "activity" ? (
             <ActivityPlaceholder selectedItem={selectedItem} />
+          ) : isFile && !isApprovedFile ? (
+            <p className="text-[11px] text-slate-500">
+              Sharing will be available after this document is approved.
+            </p>
           ) : (
             <SharingTab
               selectedItem={selectedItem}
@@ -201,7 +261,7 @@ export function DetailsPanel({
           )}
         </div>
 
-        {selectedItem && (isFile || isFolder) && (
+        {selectedItem && (isFolder || isApprovedFile) && (
           <ShareModal
             open={shareModalOpen}
             onClose={() => setShareModalOpen(false)}
@@ -216,7 +276,6 @@ export function DetailsPanel({
 }
 
 // ========== FILE DETAILS ==========
-
 
 // ========== ACTIVITY TAB ==========
 

@@ -11,15 +11,31 @@ class DepartmentSeeder extends Seeder
     public function run(): void
     {
         $departments = [
-            ['name' => 'Quality Assurance Office', 'code' => 'QA',],
-            ['name' => 'College of Computer Studies', 'code' => 'CCS',],
-            ['name' => 'College of Business Administration', 'code' => 'CBA',],
-            ['name' => 'College of Teacher Education', 'code' => 'CTE',],
-            ['name' => 'Office of Student Affairs', 'code' => 'OSA',],
+            [
+                'id'                   => 1,
+                'name'                 => 'Quality Assurance',
+                'code'                 => 'QA',
+                'description'          => 'Quality Assurance Office',
+                'department_type_id'   => 3,   // Office
+                'is_qa'                => true,
+                'is_active'            => true,
+            ],
+            [
+                'id'                   => 2,
+                'name'                 => 'College of Computer Studies',
+                'code'                 => 'CCS',
+                'description'          => 'College of Computer Studies',
+                'department_type_id'   => 1,   // Higher Education
+                'is_qa'                => false,
+                'is_active'            => true,
+            ],
         ];
 
         foreach ($departments as $dept) {
-            Department::create($dept);
+            Department::updateOrCreate(
+                ['id' => $dept['id']],
+                $dept
+            );
         }
     }
 }

@@ -9,8 +9,12 @@ type Props = {
   formatSize: (bytes: number) => string;
   onClickItem: (item: Item) => void;
   onDoubleClickItem: (item: Item) => void;
+  isRoot: boolean;
   onDownload?: (item: Item) => void;
   onRename: (item: Item) => void;
+  onCopy?: (item: Item) => void;
+  onMove?: (item: Item) => void;
+  onDetails?: (item: Item) => void;
   onDelete: (item: Item) => void;
 };
 
@@ -20,11 +24,16 @@ export function DocumentList({
   formatSize,
   onClickItem,
   onDoubleClickItem,
+  isRoot,
+  onDownload,
   onRename,
+  onCopy,
+  onMove,
+  onDetails,
   onDelete,
 }: Props) {
   return (
-    <div className="overflow-x-auto">
+    <div className="w-full">
       <table className="min-w-full text-left text-sm">
         <thead className="border-b border-slate-800 text-xs uppercase text-slate-400">
           <tr>
@@ -87,24 +96,66 @@ export function DocumentList({
                       </div>
                     }
                   >
-                    <DropdownMenu.Item
-                      onClick={() => {
-                        onRename(item);
-                      }}
-                    >
-                      Rename
-                    </DropdownMenu.Item>
-                    <DropdownMenu.Item onClick={() => {}}>
-                      Move (placeholder)
-                    </DropdownMenu.Item>
-                    <DropdownMenu.Item
-                      destructive
-                      onClick={() => {
-                        onDelete(item);
-                      }}
-                    >
-                      Archive
-                    </DropdownMenu.Item>
+                    {/* Departments at root: only Open + Details */}
+                    {item.kind === "department" && isRoot ? (
+                      <>
+                        <DropdownMenu.Item
+                          onClick={() => onDoubleClickItem(item)}
+                        >
+                          Open
+                        </DropdownMenu.Item>
+                        {onDetails && (
+                          <DropdownMenu.Item onClick={() => onDetails(item)}>
+                            Details
+                          </DropdownMenu.Item>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {item.kind === "folder" && (
+                          <DropdownMenu.Item
+                            onClick={() => onDoubleClickItem(item)}
+                          >
+                            Open
+                          </DropdownMenu.Item>
+                        )}
+
+                        {onDetails && (
+                          <DropdownMenu.Item onClick={() => onDetails(item)}>
+                            Details
+                          </DropdownMenu.Item>
+                        )}
+
+                        {isFile && onDownload && (
+                          <DropdownMenu.Item onClick={() => onDownload(item)}>
+                            Download
+                          </DropdownMenu.Item>
+                        )}
+
+                        <DropdownMenu.Item onClick={() => onRename(item)}>
+                          Rename
+                        </DropdownMenu.Item>
+
+                        {onCopy && (
+                          <DropdownMenu.Item onClick={() => onCopy(item)}>
+                            Copy
+                          </DropdownMenu.Item>
+                        )}
+
+                        {onMove && (
+                          <DropdownMenu.Item onClick={() => onMove(item)}>
+                            Move
+                          </DropdownMenu.Item>
+                        )}
+
+                        <DropdownMenu.Item
+                          destructive
+                          onClick={() => onDelete(item)}
+                        >
+                          Archive
+                        </DropdownMenu.Item>
+                      </>
+                    )}
                   </DropdownMenu>
                 </td>
               </tr>

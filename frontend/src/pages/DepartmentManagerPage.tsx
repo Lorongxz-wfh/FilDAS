@@ -158,12 +158,12 @@ export default function DepartmentManagerPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("Department form submit", {
-      activeDept,
-      formName,
-      formCode,
-      formDescription,
-    });
+    // console.log("Department form submit", {
+    //   activeDept,
+    //   formName,
+    //   formCode,
+    //   formDescription,
+    // });
     if (!formName.trim()) return;
 
     setSaving(true);

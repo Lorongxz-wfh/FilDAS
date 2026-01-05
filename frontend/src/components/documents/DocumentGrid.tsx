@@ -10,6 +10,7 @@ type Props = {
   formatSize: (bytes: number) => string;
   onClickItem: (item: Item) => void;
   onDoubleClickItem: (item: Item) => void;
+  isRoot: boolean;
   onDownload?: (item: Item) => void;
   onDownloadFolder?: (item: Item) => void;
   onRename: (item: Item) => void;
@@ -25,6 +26,7 @@ export function DocumentGrid({
   formatSize,
   onClickItem,
   onDoubleClickItem,
+  isRoot,
   onDownload,
   onDownloadFolder,
   onRename,
@@ -70,43 +72,72 @@ export function DocumentGrid({
                   </IconButton>
                 }
               >
-                {onDetails && (
-                  <DropdownMenu.Item onClick={() => onDetails(item)}>
-                    Details
-                  </DropdownMenu.Item>
+                {/* Departments: root should only show Open + Details */}
+                {item.kind === "department" && isRoot ? (
+                  <>
+                    <DropdownMenu.Item onClick={() => onDoubleClickItem(item)}>
+                      Open
+                    </DropdownMenu.Item>
+                    {onDetails && (
+                      <DropdownMenu.Item onClick={() => onDetails(item)}>
+                        Details
+                      </DropdownMenu.Item>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {/* Folders: Open, Details, Download, Rename, Copy, Move, Archive */}
+                    {item.kind === "folder" && (
+                      <DropdownMenu.Item
+                        onClick={() => onDoubleClickItem(item)}
+                      >
+                        Open
+                      </DropdownMenu.Item>
+                    )}
+
+                    {onDetails && (
+                      <DropdownMenu.Item onClick={() => onDetails(item)}>
+                        Details
+                      </DropdownMenu.Item>
+                    )}
+
+                    {item.kind === "file" && onDownload && (
+                      <DropdownMenu.Item onClick={() => onDownload(item)}>
+                        Download
+                      </DropdownMenu.Item>
+                    )}
+
+                    {item.kind === "folder" && onDownloadFolder && (
+                      <DropdownMenu.Item onClick={() => onDownloadFolder(item)}>
+                        Download
+                      </DropdownMenu.Item>
+                    )}
+
+                    {/* Files: Details, Download, Rename, Copy, Move, Archive */}
+                    <DropdownMenu.Item onClick={() => onRename(item)}>
+                      Rename
+                    </DropdownMenu.Item>
+
+                    {onCopy && (
+                      <DropdownMenu.Item onClick={() => onCopy(item)}>
+                        Copy
+                      </DropdownMenu.Item>
+                    )}
+
+                    {onMove && (
+                      <DropdownMenu.Item onClick={() => onMove(item)}>
+                        Move
+                      </DropdownMenu.Item>
+                    )}
+
+                    <DropdownMenu.Item
+                      destructive
+                      onClick={() => onDelete(item)}
+                    >
+                      Archive
+                    </DropdownMenu.Item>
+                  </>
                 )}
-
-                {item.kind === "file" && onDownload && (
-                  <DropdownMenu.Item onClick={() => onDownload(item)}>
-                    Download
-                  </DropdownMenu.Item>
-                )}
-
-                {item.kind === "folder" && onDownloadFolder && (
-                  <DropdownMenu.Item onClick={() => onDownloadFolder(item)}>
-                    Download
-                  </DropdownMenu.Item>
-                )}
-
-                <DropdownMenu.Item onClick={() => onRename(item)}>
-                  Rename
-                </DropdownMenu.Item>
-
-                {onCopy && (
-                  <DropdownMenu.Item onClick={() => onCopy(item)}>
-                    Copy
-                  </DropdownMenu.Item>
-                )}
-
-                {onMove && (
-                  <DropdownMenu.Item onClick={() => onMove(item)}>
-                    Move
-                  </DropdownMenu.Item>
-                )}
-
-                <DropdownMenu.Item destructive onClick={() => onDelete(item)}>
-                  Archive
-                </DropdownMenu.Item>
               </DropdownMenu>
 
               {/* Icon + name + meta */}

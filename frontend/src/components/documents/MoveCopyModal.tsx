@@ -68,7 +68,7 @@ export function MoveCopyModal({
   };
 
   const handleConfirm = () => {
-    console.log("MoveCopyModal confirm", selectedDestinationId);
+    // console.log("MoveCopyModal confirm", selectedDestinationId);
     onConfirm(selectedDestinationId);
   };
 

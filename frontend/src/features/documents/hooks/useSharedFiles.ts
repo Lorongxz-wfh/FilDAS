@@ -19,6 +19,7 @@ export type DocumentRow = BaseDocumentRow & {
   department_name?: string | null;
   owner_name?: string | null;
   share_permission?: "viewer" | "editor" | string;
+  shared_via?: "document" | "folder" | string;
 };
 
 export type SharedFolder = {
@@ -177,15 +178,20 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
         owner_id: d.ownerid ?? null,
         owner_name: d.ownername ?? null,
         share_permission: d.sharepermission,
+        shared_via: d.sharedvia,
       }));
 
-      setAllSharedDocs(mappedAllDocs);
-      setDocuments(mappedAllDocs.filter((d) => !d.folder_id));
-      setFolders(foldersData);
-      setFolderChildren([]);
-      setFolderDocs([]);
-      setFolderPath([]);
-      setSelectedItem(null);
+    setAllSharedDocs(mappedAllDocs);
+
+    // At root, show all documents shared to the user (direct or via folders).
+    setDocuments(mappedAllDocs);
+
+    setFolders(foldersData);
+    setFolderChildren([]);
+    setFolderDocs([]);
+    setFolderPath([]);
+    setSelectedItem(null);
+
     } catch (e) {
       console.error(e);
       setError("Failed to load shared files.");
@@ -242,6 +248,7 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
         owner_id: d.ownerid ?? null,
         owner_name: d.ownername ?? null,
         share_permission: d.sharepermission,
+        shared_via: d.sharedvia,
       }));
 
       setFolderChildren(subFolders);
@@ -417,10 +424,10 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
       // When searching, use API results (root or under current folder).
       source = searchedDocs;
     } else if (!currentFolder) {
-      // No search at root: show top-level docs (no folder) as before.
-      source = documents;
+      // Root: show only docs shared directly (exclude those inherited from shared folders).
+      source = documents.filter((d) => d.shared_via === "document");
     } else {
-      // No search inside folder: use direct children files.
+      // Inside folder: use direct children files.
       source = folderDocs;
     }
 

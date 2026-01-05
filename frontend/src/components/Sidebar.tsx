@@ -7,6 +7,7 @@ type SidebarProps = {
   onNavigate: (page: PageKey) => void;
   isAdmin: boolean;
   isSuperAdmin: boolean;
+  isQa: boolean; // current user's department is QA
 };
 
 export default function Sidebar({
@@ -14,6 +15,7 @@ export default function Sidebar({
   onNavigate,
   isAdmin,
   isSuperAdmin,
+  isQa,
 }: SidebarProps) {
   const itemVariant = (active: boolean) =>
     active ? "primary" : ("ghost" as const);
@@ -37,14 +39,16 @@ export default function Sidebar({
           Dashboard
         </Button>
 
-        <Button
-          variant={itemVariant(activePage === "qa-approvals")}
-          size="sm"
-          className="w-full justify-start"
-          onClick={() => onNavigate("qa-approvals")}
-        >
-          QA Approval Center
-        </Button>
+        {(isSuperAdmin || isQa) && (
+          <Button
+            variant={itemVariant(activePage === "qa-approvals")}
+            size="sm"
+            className="w-full justify-start"
+            onClick={() => onNavigate("qa-approvals")}
+          >
+            QA Approval Center
+          </Button>
+        )}
 
         <Button
           variant={itemVariant(activePage === "documents")}

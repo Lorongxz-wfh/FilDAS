@@ -112,7 +112,7 @@ export default function DocumentManagerPage() {
     setDetailsOpen(true);
   }, [initialDocId, documents]);
 
-  console.log("doc manager folders sample", folders.slice(0, 10));
+  // console.log("doc manager folders sample", folders.slice(0, 10));
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
@@ -532,6 +532,7 @@ export default function DocumentManagerPage() {
                 formatSize={formatSize}
                 onClickItem={handleItemClick}
                 onDoubleClickItem={handleItemDoubleClick}
+                isRoot={!currentDepartment && !currentFolder}
                 onDownload={handleDownload}
                 onDownloadFolder={handleDownloadFolder}
                 onDetails={(item) => {
@@ -569,12 +570,27 @@ export default function DocumentManagerPage() {
                 formatSize={formatSize}
                 onClickItem={handleItemClick}
                 onDoubleClickItem={handleItemDoubleClick}
+                isRoot={!currentDepartment && !currentFolder}
                 onDownload={handleDownload}
                 onRename={(item) => {
                   setSelectedItem(item);
                   setRenameError(null);
                   setRenameName(getItemName(item));
                   setRenameOpen(true);
+                }}
+                onCopy={(item) => {
+                  setSelectedItem(item);
+                  setPendingAction("copy");
+                  setMoveCopyOpen(true);
+                }}
+                onMove={(item) => {
+                  setSelectedItem(item);
+                  setPendingAction("move");
+                  setMoveCopyOpen(true);
+                }}
+                onDetails={(item) => {
+                  setSelectedItem(item);
+                  setDetailsOpen(true);
                 }}
                 onDelete={(item) => {
                   setSelectedItem(item);
@@ -597,6 +613,13 @@ export default function DocumentManagerPage() {
           onClose={() => setDetailsOpen(false)}
           width={detailsWidth}
           onResizeStart={handleDetailsResizeStart}
+          currentUser={{
+            id: user.id,
+            role: user.role ?? null,
+            department: user.department_id
+              ? { id: user.department_id, is_qa: false }
+              : null,
+          }}
         />
       </div>
 

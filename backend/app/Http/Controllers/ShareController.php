@@ -43,7 +43,7 @@ class ShareController extends Controller
         $inheritedShares = collect();
 
         if ($type === 'document') {
-            // Direct document shares
+            // For document Sharing tab, show only direct document shares.
             $directShares = Share::with(['owner', 'targetUser'])
                 ->where('document_id', $id)
                 ->get()
@@ -52,29 +52,8 @@ class ShareController extends Controller
                     return $share;
                 });
 
-            // Inherited from ancestor folders
-            $document = Document::find($id);
-            if ($document && $document->folder_id) {
-                $folderId = $document->folder_id;
-
-                while ($folderId) {
-                    $folderShares = Share::with(['owner', 'targetUser'])
-                        ->where('folder_id', $folderId)
-                        ->get()
-                        ->map(function (Share $share) use ($folderId) {
-                            $share->inherited_from = [
-                                'type' => 'folder',
-                                'id'   => $folderId,
-                            ];
-                            return $share;
-                        });
-
-                    $inheritedShares = $inheritedShares->concat($folderShares);
-
-                    $folder = Folder::find($folderId);
-                    $folderId = $folder ? $folder->parent_id : null;
-                }
-            }
+            // Do NOT include inherited folder shares here to avoid duplicate rows
+            // and confusing removals. Folder-level access is managed on the folder.
         } else { // folder
             // Direct folder shares
             $directShares = Share::with(['owner', 'targetUser'])
@@ -110,6 +89,8 @@ class ShareController extends Controller
             }
         }
 
+        // For documents we now only have $directShares; for folders we may have both.
+        // Keeping the unique() just in case, but inheritedShares will be empty for docs.
         $allShares = $directShares
             ->concat($inheritedShares)
             ->unique(function (Share $s) {
@@ -218,6 +199,7 @@ class ShareController extends Controller
             ->get();
 
         $directDocIds = $directDocShares->pluck('document_id')->toArray();
+        $hasDirectDocShares = !empty($directDocIds);
 
         // 2) All shared folder IDs (roots + descendants)
         $rootSharedFolderShares = Share::where('target_user_id', $user->id)
@@ -226,6 +208,8 @@ class ShareController extends Controller
 
         $rootSharedFolderIds = $rootSharedFolderShares->pluck('folder_id')->toArray();
         $allSharedFolderIds  = $rootSharedFolderIds;
+        $hasFolderShares = !empty($allSharedFolderIds);
+
 
         if (!empty($rootSharedFolderIds)) {
             $queue = $rootSharedFolderIds;
@@ -250,11 +234,14 @@ class ShareController extends Controller
         //    - direct document shares
         //    - documents in shared folders inherit the folder permission
         $docPermissionById = [];
+        $docSharedVia = []; // 'document' or 'folder'
 
         // 3a) direct document shares
         foreach ($directDocShares as $share) {
-            $docPermissionById[$share->document_id] = $share->permission; // 'viewer' | 'editor'
+            $docPermissionById[$share->document_id] = $share->permission;
+            $docSharedVia[$share->document_id] = 'document';
         }
+
 
         // 3b) folder shares (permission per folder)
         $folderPermissionById = [];
@@ -287,23 +274,33 @@ class ShareController extends Controller
             }
         }
 
-        // 3c) Apply folder permissions to documents in those folders (only non-archived)
+        // 3c) Apply folder permissions to documents in those folders (only non-archived, approved)
         if (!empty($allSharedFolderIds)) {
             $docsInSharedFolders = Document::whereNull('archived_at')
+                ->where('status', 'approved')
                 ->whereIn('folder_id', $allSharedFolderIds)
                 ->get(['id', 'folder_id']);
 
             foreach ($docsInSharedFolders as $doc) {
                 $folderPerm = $folderPermissionById[$doc->folder_id] ?? null;
-                if ($folderPerm && !isset($docPermissionById[$doc->id])) {
-                    $docPermissionById[$doc->id] = $folderPerm;
+
+                if (!$folderPerm) {
+                    continue;
                 }
+
+                // Keep any existing direct doc permission, but always mark
+                // docs in shared folders as coming via folder so the
+                // frontend can hide them at the top level.
+                $docPermissionById[$doc->id] = $docPermissionById[$doc->id] ?? $folderPerm;
+                $docSharedVia[$doc->id] = 'folder';
             }
         }
 
-        // 4) Base query: direct docs OR docs in shared folders (only non-archived)
+        // 4) Base query: direct docs OR docs in shared folders (only non-archived, approved)
         $docsQuery = Document::with(['folder.department', 'uploadedBy'])
             ->whereNull('archived_at')
+            ->where('status', 'approved')
+
             ->where(function ($q) use ($directDocIds, $allSharedFolderIds) {
                 if (!empty($directDocIds)) {
                     $q->whereIn('id', $directDocIds);
@@ -313,9 +310,19 @@ class ShareController extends Controller
                 }
             });
 
+        // Optional guard: if user has no shares at all, return empty.
+        if (!$hasDirectDocShares && !$hasFolderShares) {
+            return response()->json([]);
+        }
+
         // Filter by specific folder when navigating
         if ($folderId !== null) {
             $docsQuery->where('folder_id', (int) $folderId);
+        }
+
+        // If user has no direct doc shares AND no folder shares, they should see nothing.
+        if (empty($directDocIds) && empty($allSharedFolderIds)) {
+            return response()->json([]);
         }
 
         $documents = $docsQuery->orderBy('created_at', 'desc')->get();
@@ -339,6 +346,7 @@ class ShareController extends Controller
                 'original_owner_id'   => $doc->original_owner_id,
                 'original_owner_name' => $doc->originalOwner?->name ?? null,
                 'sharepermission'  => $docPermissionById[$doc->id] ?? 'viewer',
+                'sharedvia'        => $docSharedVia[$doc->id] ?? 'document', // default to document
             ];
         });
 

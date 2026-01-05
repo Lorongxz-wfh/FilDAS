@@ -4,6 +4,16 @@ import { api } from "../../lib/api";
 import Modal from "../Modal";
 import type { DocumentRow, FolderRow, Item } from "../../types/documents";
 
+export const statusBadgeClass = (status?: string | null) => {
+  if (status === "approved") {
+    return "inline-flex rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400";
+  }
+  if (status === "rejected") {
+    return "inline-flex rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-medium text-rose-400";
+  }
+  return "inline-flex rounded-full bg-slate-500/20 px-2 py-0.5 text-[10px] font-medium text-slate-300";
+};
+
 export type FileDetailsProps = {
   doc: DocumentRow;
   previewUrl: string | null;
@@ -11,6 +21,7 @@ export type FileDetailsProps = {
   formatSize: (bytes: number) => string;
   status?: string | null;
   onDescriptionSaved?: () => void | Promise<void>;
+  canComment?: boolean;
 };
 
 export type FolderDetailsProps = {
@@ -44,15 +55,40 @@ export function FileDetails({
   formatSize,
   status,
   onDescriptionSaved,
+  canComment = false,
 }: FileDetailsProps) {
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [editingDescription, setEditingDescription] = useState(false);
   const [description, setDescription] = useState(doc.description || "");
   const [savingDescription, setSavingDescription] = useState(false);
 
+  const [qaHistory, setQaHistory] = useState<QaActivityEntry[]>([]);
+  const [qaHistoryLoading, setQaHistoryLoading] = useState(false);
+
   useEffect(() => {
     setDescription(doc.description || "");
     setEditingDescription(false);
+
+    const loadQaHistory = async () => {
+      setQaHistoryLoading(true);
+      try {
+        const res = await api.get<QaActivityEntry[]>(
+          `/documents/${doc.id}/activity`
+        );
+        const qaActions = ["uploaded", "approved", "rejected"];
+        const filtered = res.data.filter((entry) =>
+          qaActions.includes(entry.action)
+        );
+        setQaHistory(filtered);
+      } catch (e) {
+        console.error(e);
+        setQaHistory([]);
+      } finally {
+        setQaHistoryLoading(false);
+      }
+    };
+
+    loadQaHistory();
   }, [doc.id, doc.description]);
 
   const handleSaveDescription = async () => {
@@ -162,9 +198,11 @@ export function FileDetails({
           File info
         </p>
         {status && (
-          <div className="flex justify-between text-[11px]">
+          <div className="flex items-center justify-between text-[11px]">
             <span className="text-slate-500">Status:</span>
-            <span className="text-slate-200 capitalize">{status}</span>
+            <span className={statusBadgeClass(status)}>
+              {status || "pending"}
+            </span>
           </div>
         )}
         {(doc as any).owner?.name && (
@@ -207,7 +245,47 @@ export function FileDetails({
         )}
       </div>
 
-      <FileCommentsSection documentId={doc.id} />
+      {/* QA history (same idea as QA Approval Center modal) */}
+      <div className="mb-3 border-t border-slate-800 pt-2">
+        <p className="mb-1 text-[11px] font-semibold uppercase text-slate-400">
+          QA history
+        </p>
+        <div className="max-h-32 overflow-y-auto rounded-md border border-slate-800 bg-slate-950/40 p-2">
+          {qaHistoryLoading ? (
+            <div className="py-2 text-center text-[11px] text-slate-500">
+              Loading QA history...
+            </div>
+          ) : qaHistory.length === 0 ? (
+            <div className="py-2 text-center text-[11px] text-slate-500">
+              No QA events yet.
+            </div>
+          ) : (
+            qaHistory.map((entry) => (
+              <div
+                key={entry.id}
+                className="mb-1 rounded bg-slate-800/60 px-2 py-1 text-[11px]"
+              >
+                <div className="text-[10px] text-slate-400">
+                  {entry.user?.name ?? "System"} •{" "}
+                  {new Date(entry.created_at).toLocaleString()}
+                </div>
+                <div className="text-slate-100">
+                  {entry.action === "approved" && "Approved"}
+                  {entry.action === "rejected" && "Rejected"}
+                  {entry.action === "uploaded" && "Uploaded"}
+                  {entry.action !== "approved" &&
+                    entry.action !== "rejected" &&
+                    entry.action !== "uploaded" &&
+                    entry.action}
+                  {entry.details ? ` — ${entry.details}` : ""}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      <FileCommentsSection documentId={doc.id} canComment={canComment} />
 
       <Modal
         open={previewModalOpen}
@@ -366,7 +444,21 @@ type CommentDto = {
   user: { id: number; name: string; email: string } | null;
 };
 
-function FileCommentsSection({ documentId }: { documentId: number }) {
+type QaActivityEntry = {
+  id: number;
+  action: string;
+  details: string | null;
+  created_at: string;
+  user: { id: number; name: string; email: string } | null;
+};
+
+function FileCommentsSection({
+  documentId,
+  canComment,
+}: {
+  documentId: number;
+  canComment: boolean;
+}) {
   const [comments, setComments] = useState<CommentDto[]>([]);
   const [loading, setLoading] = useState(false);
   const [newComment, setNewComment] = useState("");
@@ -392,7 +484,7 @@ function FileCommentsSection({ documentId }: { documentId: number }) {
   }, [documentId]);
 
   const handleAddComment = async () => {
-    if (!newComment.trim()) return;
+    if (!canComment || !newComment.trim()) return;
     setSubmitting(true);
     try {
       const res = await api.post<CommentDto>(
@@ -443,19 +535,27 @@ function FileCommentsSection({ documentId }: { documentId: number }) {
       </div>
 
       <div className="flex items-center gap-2">
-        <input
-          className="flex-1 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
-          placeholder="Add a comment..."
-          value={newComment}
-          onChange={(e) => setNewComment(e.target.value)}
-        />
-        <button
-          className="rounded-md bg-sky-600 px-2 py-1 text-[11px] text-white hover:bg-sky-500 disabled:opacity-60"
-          disabled={!newComment.trim() || submitting}
-          onClick={handleAddComment}
-        >
-          {submitting ? "Sending..." : "Send"}
-        </button>
+        {canComment ? (
+          <>
+            <input
+              className="flex-1 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+              placeholder="Add a comment..."
+              value={newComment}
+              onChange={(e) => setNewComment(e.target.value)}
+            />
+            <button
+              className="rounded-md bg-sky-600 px-2 py-1 text-[11px] text-white hover:bg-sky-500 disabled:opacity-60"
+              disabled={!newComment.trim() || submitting}
+              onClick={handleAddComment}
+            >
+              {submitting ? "Sending..." : "Send"}
+            </button>
+          </>
+        ) : (
+          <p className="text-[11px] text-slate-500">
+            You can view comments but not add new ones.
+          </p>
+        )}
       </div>
     </div>
   );
