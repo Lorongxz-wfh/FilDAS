@@ -193,6 +193,41 @@ export function useDocumentActions({
     }
   };
 
+  const replaceFile = async (docId: number, file: File) => {
+    try {
+      const form = new FormData();
+      form.append("file", file);
+
+      const res = await api.post<DocumentRow>(
+        `/documents/${docId}/replace-file`,
+        form,
+        {
+          headers: { "Content-Type": "multipart/form-data" },
+        }
+      );
+
+      const updated = res.data;
+
+      // Update documents list with the new metadata
+      setDocuments((prev) =>
+        prev.map((d) => (d.id === updated.id ? { ...d, ...updated } : d))
+      );
+
+      notify("File replaced and new version created.", "success");
+      return updated;
+    } catch (e: any) {
+      console.error(e);
+      const msg =
+        e?.response?.data?.error ||
+        e?.response?.data?.message ||
+        "Failed to replace file.";
+      notify(msg, "error");
+      throw e;
+    }
+  };
+
+  
+
   return {
     isBusy,
     setIsBusy,
@@ -201,5 +236,6 @@ export function useDocumentActions({
     handleTrashSelected,
     moveSelected,
     copySelected,
+    replaceFile, // NEW
   };
 }

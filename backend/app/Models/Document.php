@@ -95,6 +95,18 @@ class Document extends Model
         return $this->morphMany(Activity::class, 'subject');
     }
 
+    // All saved versions of this document (latest has highest version_number)
+    public function versions()
+    {
+        return $this->hasMany(DocumentVersion::class)->orderBy('version_number', 'asc');
+    }
+
+    // Convenience: latest version relation (optional)
+    public function latestVersion()
+    {
+        return $this->hasOne(DocumentVersion::class)->latestOfMany('version_number');
+    }
+
     public function comments()
     {
         return $this->morphMany(Comment::class, 'commentable')->latest();

@@ -22,6 +22,8 @@ export type FileDetailsProps = {
   status?: string | null;
   onDescriptionSaved?: () => void | Promise<void>;
   canComment?: boolean;
+  onReplaceFile?: (docId: number, file: File) => Promise<any> | any;
+  onReloadCurrent?: () => void | Promise<void>;
 };
 
 export type FolderDetailsProps = {
@@ -48,6 +50,16 @@ export function prettyType(mime: string): string {
   return mime;
 }
 
+type VersionDto = {
+  id: number;
+  version_number: number;
+  original_filename: string;
+  mime_type: string;
+  size_bytes: number;
+  uploaded_by: { id: number; name: string } | null;
+  created_at: string | null;
+};
+
 export function FileDetails({
   doc,
   previewUrl,
@@ -56,6 +68,8 @@ export function FileDetails({
   status,
   onDescriptionSaved,
   canComment = false,
+  onReplaceFile,
+  onReloadCurrent,
 }: FileDetailsProps) {
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [editingDescription, setEditingDescription] = useState(false);
@@ -64,6 +78,14 @@ export function FileDetails({
 
   const [qaHistory, setQaHistory] = useState<QaActivityEntry[]>([]);
   const [qaHistoryLoading, setQaHistoryLoading] = useState(false);
+
+  const [replaceModalOpen, setReplaceModalOpen] = useState(false);
+  const [replaceFile, setReplaceFileState] = useState<File | null>(null);
+  const [replacing, setReplacing] = useState(false);
+
+  const [versions, setVersions] = useState<VersionDto[]>([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [versionsError, setVersionsError] = useState<string | null>(null);
 
   useEffect(() => {
     setDescription(doc.description || "");
@@ -88,7 +110,25 @@ export function FileDetails({
       }
     };
 
+    const loadVersions = async () => {
+      setVersionsLoading(true);
+      setVersionsError(null);
+      try {
+        const res = await api.get<VersionDto[]>(
+          `/documents/${doc.id}/versions`
+        );
+        setVersions(res.data);
+      } catch (e) {
+        console.error(e);
+        setVersions([]);
+        setVersionsError("Failed to load versions.");
+      } finally {
+        setVersionsLoading(false);
+      }
+    };
+
     loadQaHistory();
+    loadVersions();
   }, [doc.id, doc.description]);
 
   const handleSaveDescription = async () => {
@@ -102,6 +142,59 @@ export function FileDetails({
       alert("Failed to save description");
     } finally {
       setSavingDescription(false);
+    }
+  };
+
+  const handleReplaceSubmit = async () => {
+    if (!onReplaceFile || !replaceFile) return;
+    setReplacing(true);
+    try {
+      await onReplaceFile(doc.id, replaceFile);
+      setReplaceModalOpen(false);
+      setReplaceFileState(null);
+    } catch {
+      // error notification handled by caller
+    } finally {
+      setReplacing(false);
+    }
+  };
+
+  const handleRevertVersion = async (versionNumber: number) => {
+    if (
+      !window.confirm(
+        `Revert file to version v${versionNumber}? This will create a new version representing the revert.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const res = await api.post<DocumentRow>(
+        `/documents/${doc.id}/versions/${versionNumber}/revert`
+      );
+
+      const updated = res.data;
+
+      // Update basic doc fields locally so panel feels instant
+      (doc as any).original_filename = updated.original_filename;
+      (doc as any).mime_type = updated.mime_type;
+      (doc as any).size_bytes = updated.size_bytes;
+      (doc as any).uploaded_at = updated.uploaded_at;
+      (doc as any).uploaded_by = updated.uploaded_by;
+
+      // Reload versions list so the new revert version appears
+      const versionsRes = await api.get<VersionDto[]>(
+        `/documents/${doc.id}/versions`
+      );
+      setVersions(versionsRes.data);
+
+      // Ask parent to reload current folder/department + details
+      if (onReloadCurrent) {
+        await onReloadCurrent();
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Failed to revert to this version.");
     }
   };
 
@@ -243,6 +336,18 @@ export function FileDetails({
             </span>
           </div>
         )}
+
+        {onReplaceFile && (
+          <div className="pt-2">
+            <button
+              type="button"
+              className="text-[11px] text-sky-400 hover:text-sky-300"
+              onClick={() => setReplaceModalOpen(true)}
+            >
+              Replace file (new version)
+            </button>
+          </div>
+        )}
       </div>
 
       {/* QA history (same idea as QA Approval Center modal) */}
@@ -285,7 +390,100 @@ export function FileDetails({
         </div>
       </div>
 
+      <div className="mb-3 border-t border-slate-800 pt-2">
+        <p className="mb-1 text-[11px] font-semibold uppercase text-slate-400">
+          Versions
+        </p>
+        <div className="max-h-32 overflow-y-auto rounded-md border border-slate-800 bg-slate-950/40 p-2">
+          {versionsLoading ? (
+            <div className="py-2 text-center text-[11px] text-slate-500">
+              Loading versions...
+            </div>
+          ) : versionsError ? (
+            <div className="py-2 text-center text-[11px] text-rose-400">
+              {versionsError}
+            </div>
+          ) : versions.length === 0 ? (
+            <div className="py-2 text-center text-[11px] text-slate-500">
+              No versions recorded.
+            </div>
+          ) : (
+            versions.map((v) => (
+              <div
+                key={v.id}
+                className="mb-1 flex items-center justify-between rounded bg-slate-800/60 px-2 py-1 text-[11px]"
+              >
+                <div className="flex flex-col">
+                  <span className="text-slate-100">
+                    v{v.version_number} ·{" "}
+                    {v.original_filename || doc.original_filename}
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    {v.uploaded_by?.name ?? "Unknown"} ·{" "}
+                    {v.created_at
+                      ? new Date(v.created_at).toLocaleString()
+                      : ""}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-md border border-slate-700 px-2 py-0.5 text-[10px] text-slate-200 hover:bg-slate-800"
+                  onClick={() => handleRevertVersion(v.version_number)}
+                >
+                  Revert
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
       <FileCommentsSection documentId={doc.id} canComment={canComment} />
+
+      <Modal
+        open={replaceModalOpen}
+        title="Replace file (new version)"
+        onClose={() => {
+          if (replacing) return;
+          setReplaceModalOpen(false);
+          setReplaceFileState(null);
+        }}
+      >
+        <div className="space-y-3 text-xs text-slate-200">
+          <p>
+            Upload a new file to create a new version of this document. The
+            current file will be kept in version history.
+          </p>
+          <input
+            type="file"
+            className="w-full text-[11px] text-slate-200"
+            onChange={(e) => setReplaceFileState(e.target.files?.[0] ?? null)}
+            disabled={replacing}
+          />
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              className="rounded-md border border-slate-700 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-800 disabled:opacity-60"
+              onClick={() => {
+                if (replacing) return;
+                setReplaceModalOpen(false);
+                setReplaceFileState(null);
+              }}
+              disabled={replacing}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="rounded-md bg-sky-600 px-2 py-1 text-[11px] text-white hover:bg-sky-500 disabled:opacity-60"
+              disabled={!replaceFile || replacing}
+              onClick={handleReplaceSubmit}
+            >
+              {replacing ? "Replacing..." : "Replace file"}
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         open={previewModalOpen}

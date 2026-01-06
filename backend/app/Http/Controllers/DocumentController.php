@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\Document;
 use App\Models\Folder;
+use App\Models\User;
+use App\Models\DocumentVersion;
 use App\Models\Share;
 use App\Models\Activity;
 use App\Helpers\ActivityLogger;
@@ -248,36 +250,36 @@ class DocumentController extends Controller
             'status'            => 'pending',
         ]);
 
+        // NEW: create version 1 for this document
+        DocumentVersion::create([
+            'document_id'       => $document->id,
+            'version_number'    => 1,
+            'file_path'         => $document->file_path,
+            'original_filename' => $document->original_filename,
+            'mime_type'         => $document->mime_type,
+            'size_bytes'        => $document->size_bytes,
+            'uploaded_by'       => $uploaderId,
+        ]);
 
         $docLabel = $document->title ?: $document->original_filename;
         $location = $document->folder_id
-            ? 'folder "' . ($parentFolder->name ?? 'Unknown') . '"'
-            : 'department "' . ($document->department?->name ?? 'Unknown') . '"';
+            ? 'folder ' . ($document->folder?->name ?? 'Unknown') . ' / department ' . ($document->department?->name ?? 'Unknown')
+            : 'department ' . ($document->department?->name ?? 'Unknown');
 
         // Log on the document itself
-        ActivityLogger::log(
-            $document,
-            'uploaded',
-            'Uploaded document "' . $docLabel . '" to ' . $location
-        );
+        ActivityLogger::log($document, 'uploaded', 'Uploaded document ' . $docLabel . ' to ' . $location);
 
         // Also log on parent folder if the document is inside one
-        if ($document->folder_id && ($parentFolder = Folder::find($document->folder_id))) {
-            ActivityLogger::log(
-                $parentFolder,
-                'updated',
-                'Document uploaded here: "' . $docLabel . '"'
-            );
+        if ($document->folder_id) {
+            $parentFolder = Folder::find($document->folder_id);
+            ActivityLogger::log($parentFolder, 'updated', 'Document uploaded here: ' . $docLabel);
         }
 
-        // Notify QA users that a new document needs review.
-        // All users whose department is marked as QA, EXCLUDING super admins.
-        $qaUsers = \App\Models\User::whereHas('department', function ($q) {
+        // Notify QA users that a new document needs review
+        // All users whose department is marked as QA.
+        $qaUsers = User::whereHas('department', function ($q) {
             $q->where('is_qa', true);
         })
-            ->whereDoesntHave('role', function ($q) {
-                $q->where('name', 'Super Admin');
-            })
             ->get();
 
         if ($qaUsers->isNotEmpty()) {
@@ -289,22 +291,161 @@ class DocumentController extends Controller
                 $qaUser->notify(new ItemUpdatedNotification(
                     $itemType,
                     $itemName,
-                    'submitted for QA review',
+                    'pendingqa',
                     $uploaderName,
                     $document->id
                 ));
             }
         }
 
-        return response()->json(
-            $document->load(['folder', 'uploadedBy', 'owner']),
-            201
-        );
+        return response()->json($document->load('folder', 'uploadedBy', 'owner'), 201);
     }
 
     public function show(Document $document)
     {
         return response()->json($document->load(['folder', 'uploadedBy', 'owner']));
+    }
+
+    // List all versions for a document (latest last)
+    public function versions(Document $document)
+    {
+        $versions = $document->versions()
+            ->with('uploadedBy:id,name,email')
+            ->orderBy('version_number', 'asc')
+            ->get()
+            ->map(function ($v) {
+                return [
+                    'id'              => $v->id,
+                    'version_number'  => $v->version_number,
+                    'original_filename' => $v->original_filename,
+                    'mime_type'       => $v->mime_type,
+                    'size_bytes'      => $v->size_bytes,
+                    'uploaded_by'     => $v->uploadedBy
+                        ? ['id' => $v->uploadedBy->id, 'name' => $v->uploadedBy->name]
+                        : null,
+                    'created_at'      => $v->created_at?->toIso8601String(),
+                ];
+            });
+
+        return response()->json($versions);
+    }
+
+    public function downloadVersion(Document $document, int $version)
+    {
+        $versionRow = $document->versions()
+            ->where('version_number', $version)
+            ->first();
+
+        if (!$versionRow) {
+            return response()->json(['error' => 'Version not found'], 404);
+        }
+
+        $disk = Storage::disk('fildas_docs');
+        $path = $versionRow->file_path;
+
+        if (!$path || !$disk->exists($path)) {
+            return response()->json(['error' => 'File for this version not found'], 404);
+        }
+
+        $fullPath = $disk->path($path);
+
+        return response()->download(
+            $fullPath,
+            $versionRow->original_filename ?? $document->original_filename ?? 'download'
+        );
+    }
+
+    // Revert document's current file to a specific version
+    public function revertToVersion(Request $request, Document $document, int $version)
+    {
+        $user = $request->user();
+
+        // Permission: same rules as replaceFile
+        $effectivePerm = $this->getEffectivePermissionForUser($document, $user);
+        $isOwner = (int) $document->owner_id === (int) $user->id
+            || (int) $document->uploaded_by === (int) $user->id;
+
+        if ($effectivePerm === 'viewer' || ($effectivePerm === 'contributor' && !$isOwner)) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        $versionRow = $document->versions()
+            ->where('version_number', $version)
+            ->first();
+
+        if (!$versionRow) {
+            return response()->json(['error' => 'Version not found'], 404);
+        }
+
+        $disk = Storage::disk('fildas_docs');
+        $path = $versionRow->file_path;
+
+        if (!$path || !$disk->exists($path)) {
+            return response()->json(['error' => 'File for this version not found'], 404);
+        }
+
+        // Determine next version number (for the revert event itself)
+        $lastVersion = $document->versions()->max('version_number') ?? 0;
+        $nextVersion = $lastVersion + 1;
+
+        // Record a new version entry representing this revert (points to same file_path)
+        DocumentVersion::create([
+            'document_id'       => $document->id,
+            'version_number'    => $nextVersion,
+            'file_path'         => $versionRow->file_path,
+            'original_filename' => $versionRow->original_filename,
+            'mime_type'         => $versionRow->mime_type,
+            'size_bytes'        => $versionRow->size_bytes,
+            'uploaded_by'       => $user->id,
+        ]);
+
+        // Update main document to use this file
+        $document->file_path = $versionRow->file_path;
+        $document->original_filename = $versionRow->original_filename;
+        $document->mime_type = $versionRow->mime_type;
+        $document->size_bytes = $versionRow->size_bytes;
+        $document->uploaded_at = now();
+        $document->uploaded_by = $user->id;
+        $document->save();
+
+        $docLabel = $document->title ?: $document->original_filename;
+
+        ActivityLogger::log(
+            $document,
+            'updated',
+            'File reverted to version ' . $version . ' (recorded as version ' . $nextVersion . ') for document ' . $docLabel,
+            $user->id
+        );
+
+        if ($document->folder_id) {
+            $parentFolder = Folder::find($document->folder_id);
+            if ($parentFolder) {
+                ActivityLogger::log(
+                    $parentFolder,
+                    'updated',
+                    'Document file reverted: ' . $docLabel,
+                    $user->id
+                );
+            }
+        }
+
+        $owner = $document->owner ?? $document->uploadedBy ?? null;
+        if ($owner && (int) $owner->id !== (int) $user->id) {
+            $itemType = 'document';
+            $itemName = $document->title ?? $document->original_filename ?? 'Untitled document';
+            $owner->notify(new ItemUpdatedNotification(
+                $itemType,
+                $itemName,
+                'file_reverted',
+                $user->name ?? 'Someone',
+                $document->id
+            ));
+        }
+
+        return response()->json(
+            $document->load('folder', 'uploadedBy', 'owner'),
+            200
+        );
     }
 
     public function update(Request $request, Document $document)
@@ -377,6 +518,115 @@ class DocumentController extends Controller
 
         return response()->json($document->load(['folder', 'uploadedBy', 'owner']));
     }
+
+    // Replace the underlying file and create a new version entry
+    public function replaceFile(Request $request, Document $document)
+    {
+        $user = $request->user();
+
+        // Permission: reuse effective permission logic
+        $effectivePerm = $this->getEffectivePermissionForUser($document, $user);
+        $isOwner       = (int) $document->owner_id === (int) $user->id
+            || (int) $document->uploaded_by === (int) $user->id;
+
+        // Only editors or owners can replace the file
+        if ($effectivePerm === 'viewer' || ($effectivePerm === 'contributor' && !$isOwner)) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        $validated = $request->validate([
+            'file' => 'required|file|max:51200', // 50 MB, match your store()
+        ]);
+
+        if (!$request->hasFile('file')) {
+            return response()->json(['error' => 'No file uploaded'], 400);
+        }
+
+        $file         = $request->file('file');
+        $disk         = Storage::disk('fildas_docs');
+        $originalName = $file->getClientOriginalName();
+        $extension    = $file->getClientOriginalExtension();
+        $filename     = pathinfo($originalName, PATHINFO_FILENAME);
+        $uniqueName   = $filename . '_' . time() . '.' . $extension;
+
+        $path = $file->storeAs('', $uniqueName, 'fildas_docs');
+
+        if (!$path) {
+            return response()->json(['error' => 'Failed to store file'], 500);
+        }
+
+        // Determine next version number
+        $lastVersion = $document->versions()->max('version_number') ?? 0;
+        $nextVersion = $lastVersion + 1;
+
+        // Create new version row
+        DocumentVersion::create([
+            'document_id'       => $document->id,
+            'version_number'    => $nextVersion,
+            'file_path'         => $path,
+            'original_filename' => $originalName,
+            'mime_type'         => $file->getMimeType(),
+            'size_bytes'        => $file->getSize(),
+            'uploaded_by'       => $user->id,
+        ]);
+
+        // Optionally delete old physical file (current live one)
+        if ($document->file_path && $disk->exists($document->file_path)) {
+            // Keep or delete based on your policy. For safety, keep for now.
+            // $disk->delete($document->file_path);
+        }
+
+        // Update main document to point to new version
+        $document->file_path         = $path;
+        $document->original_filename = $originalName;
+        $document->mime_type         = $file->getMimeType();
+        $document->size_bytes        = $file->getSize();
+        $document->uploaded_at       = now();
+        $document->uploaded_by       = $user->id;
+        $document->save();
+
+        $docLabel = $document->title ?: $document->original_filename;
+
+        ActivityLogger::log(
+            $document,
+            'updated',
+            'File replaced; new version ' . $nextVersion . ' for document ' . $docLabel,
+            $user->id
+        );
+
+        if ($document->folder_id) {
+            $parentFolder = Folder::find($document->folder_id);
+            if ($parentFolder) {
+                ActivityLogger::log(
+                    $parentFolder,
+                    'updated',
+                    'Document file updated: ' . $docLabel,
+                    $user->id
+                );
+            }
+        }
+
+        // Notify owner if someone else replaced the file
+        $owner = $document->owner ?? $document->uploadedBy ?? null;
+        if ($owner && (int) $owner->id !== (int) $user->id) {
+            $itemType = 'document';
+            $itemName = $document->title ?? $document->original_filename ?? 'Untitled document';
+
+            $owner->notify(new ItemUpdatedNotification(
+                $itemType,
+                $itemName,
+                'file_replaced',
+                $user->name ?? 'Someone',
+                $document->id
+            ));
+        }
+
+        return response()->json(
+            $document->load('folder', 'uploadedBy', 'owner'),
+            200
+        );
+    }
+
 
     public function trash(Request $request, Document $document)
     {

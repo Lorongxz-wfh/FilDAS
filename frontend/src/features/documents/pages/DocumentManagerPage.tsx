@@ -134,6 +134,7 @@ export default function DocumentManagerPage() {
     handleTrashSelected,
     moveSelected,
     copySelected,
+    replaceFile,
   } = useDocumentActions({
     currentDepartment,
     currentFolder,
@@ -301,6 +302,20 @@ export default function DocumentManagerPage() {
         notify("Failed to reload departments.", "error");
       }
     }
+  };
+
+  const handleReplaceFile = async (docId: number, file: File) => {
+    const updated = await replaceFile(docId, file);
+
+    // If the replaced doc is currently selected, update selectedItem too
+    setSelectedItem((prev) => {
+      if (!prev || prev.kind !== "file") return prev;
+      const prevDoc = prev.data as DocumentRow;
+      if (prevDoc.id !== updated.id) return prev;
+      return { kind: "file", data: { ...prevDoc, ...updated } };
+    });
+
+    return updated;
   };
 
   // Auto-refresh current view every 45 seconds when inside a department or folder.
@@ -620,6 +635,7 @@ export default function DocumentManagerPage() {
               ? { id: user.department_id, is_qa: false }
               : null,
           }}
+          onReplaceFile={handleReplaceFile}
         />
       </div>
 

@@ -99,9 +99,18 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/documents/{document}', [DocumentController::class, 'update']);
     Route::patch('/documents/{document}', [DocumentController::class, 'update']);
     Route::delete('/documents/{document}', [DocumentController::class, 'destroy']);
+    Route::get('/documents/{document}/versions', [DocumentController::class, 'versions']);
+    Route::get('/documents/{document}/versions/{version}', [DocumentController::class, 'downloadVersion']);
+    Route::post('/documents/{document}/versions/{version}/revert', [DocumentController::class, 'revertToVersion']);
+
+
 
     Route::get('/documents/{document}/download', [DocumentController::class, 'download'])
         ->name('documents.download');
+
+    // NEW: replace main file and create a new version
+    Route::post('/documents/{document}/replace-file', [DocumentController::class, 'replaceFile']);
+
     Route::post('/documents/{document}/move', [DocumentController::class, 'move']);
     Route::post('/documents/{document}/copy', [DocumentController::class, 'copy']);
     Route::post('/documents/{document}/trash', [DocumentController::class, 'trash']);

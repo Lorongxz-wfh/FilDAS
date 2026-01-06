@@ -28,6 +28,7 @@ type Props = {
   width?: number;
   onResizeStart?: () => void;
   currentUser: CurrentUser | null;
+  onReplaceFile?: (docId: number, file: File) => Promise<any> | any;
 };
 
 type ShareRecord = {
@@ -72,6 +73,7 @@ export function DetailsPanel({
   width = 320,
   onResizeStart,
   currentUser,
+  onReplaceFile,
 }: Props) {
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<
@@ -234,6 +236,8 @@ export function DetailsPanel({
                 status={(selectedItem.data as any).status}
                 onDescriptionSaved={onAccessChanged}
                 canComment={canCommentForSelectedFile}
+                onReplaceFile={onReplaceFile}
+                onReloadCurrent={onAccessChanged}
               />
             ) : isFolder ? (
               <FolderDetails
