@@ -10,7 +10,7 @@ return new class extends Migration
     {
         Schema::table('folders', function (Blueprint $table) {
             // Place next to deleted_at / timestamps for clarity
-            $table->timestamp('archived_at')
+            $table->timestamp('trashd_at')
                 ->nullable()
                 ->after('deleted_at')
                 ->index();
@@ -20,7 +20,7 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('folders', function (Blueprint $table) {
-            $table->dropColumn('archived_at');
+            $table->dropColumn('trashd_at');
         });
     }
 };

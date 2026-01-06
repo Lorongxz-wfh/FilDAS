@@ -152,7 +152,7 @@ export function DocumentList({
                           destructive
                           onClick={() => onDelete(item)}
                         >
-                          Archive
+                          Trash
                         </DropdownMenu.Item>
                       </>
                     )}

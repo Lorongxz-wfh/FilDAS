@@ -115,10 +115,27 @@ export default function TopNav({ onLogout }: TopNavProps) {
       );
       setUnreadCount((c) => Math.max(0, c - 1));
 
+      const { item_type, item_id } = notif.data;
+
+      // Basic routing by notification type + item_type
       if (notif.type === "ItemSharedNotification") {
-        navigate("/shared");
+        // Shared item; go to Shared Files and optionally preselect
+        if (item_type === "document" && item_id) {
+          navigate(`/shared?type=document&id=${item_id}`);
+        } else if (item_type === "folder" && item_id) {
+          navigate(`/shared?type=folder&id=${item_id}`);
+        } else {
+          navigate("/shared");
+        }
       } else if (notif.type === "ItemUpdatedNotification") {
-        navigate("/documents");
+        // Owner's item was updated; go to Document Manager (for now)
+        if (item_type === "document" && item_id) {
+          navigate(`/documents?docId=${item_id}`);
+        } else if (item_type === "folder" && item_id) {
+          navigate(`/documents?folderId=${item_id}`);
+        } else {
+          navigate("/documents");
+        }
       } else {
         navigate("/dashboard");
       }
@@ -200,7 +217,7 @@ export default function TopNav({ onLogout }: TopNavProps) {
           </IconButton>
 
           {notifOpen && (
-            <div className="absolute right-0 top-8 mt-1 w-80 max-h-80 overflow-y-auto rounded-md border border-slate-700 bg-slate-900 text-xs shadow-lg z-20">
+            <div className="absolute right-0 top-8 mt-1 w-80 max-h-80 overflow-y-auto rounded-lg border border-slate-700 bg-[#0b1024] text-xs shadow-2xl z-50 backdrop-blur-sm">
               <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700">
                 <span className="font-semibold text-slate-100">
                   Notifications
@@ -304,7 +321,7 @@ export default function TopNav({ onLogout }: TopNavProps) {
           </Button>
 
           {open && (
-            <div className="absolute right-0 top-8 mt-1 w-44 rounded-md border border-slate-700 bg-slate-900 text-xs shadow-lg z-20">
+            <div className="absolute right-0 top-8 mt-1 w-44 rounded-lg border border-slate-700 bg-slate-900/95 text-xs shadow-2xl z-50">
               <Button
                 variant="ghost"
                 size="xs"
@@ -321,10 +338,10 @@ export default function TopNav({ onLogout }: TopNavProps) {
                 className="w-full justify-start rounded-none px-3 py-2"
                 onClick={() => {
                   setOpen(false);
-                  navigate("/archive");
+                  navigate("/trash");
                 }}
               >
-                Archive
+                Trash
               </Button>
 
               <Button

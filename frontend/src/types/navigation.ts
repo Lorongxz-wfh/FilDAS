@@ -6,5 +6,6 @@ export type PageKey =
   | "shared"
   | "departments"
   | "users"
-  | "archive"
-  | "activity-logs";
+  | "trash"
+  | "activity-logs"
+  | "reports";

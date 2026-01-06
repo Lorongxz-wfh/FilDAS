@@ -6,16 +6,13 @@ import DashboardPage from "./pages/DashboardPage";
 import DocumentManagerPage from "./features/documents/pages/DocumentManagerPage";
 import SharedFilesPage from "./pages/SharedFilesPage";
 import UserManagerPage from "./pages/UserManagerPage";
-// import ReportsPage from "./pages/ReportsPage";
+import ReportsPage from "./pages/ReportsPage";
 import DepartmentManagerPage from "./pages/DepartmentManagerPage";
 import { api, setAuthToken } from "./lib/api";
 import AuditLogsPage from "./pages/ActivityLogsPage";
 import NotificationsPage from "./pages/NotificationsPage";
-import ArchivePage from "./features/documents/pages/ArchivePage";
+import TrashPage from "./features/documents/pages/TrashPage";
 import QaApprovalCenterPage from "./features/documents/pages/QaApprovalCenterPage";
-
-
-
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -103,9 +100,9 @@ function App() {
             <Route path="/shared" element={<SharedFilesPage />} />
             <Route path="/users" element={<UserManagerPage />} />
             <Route path="/departments" element={<DepartmentManagerPage />} />
-            <Route path="/archive" element={<ArchivePage />} />
+            <Route path="/trash" element={<TrashPage />} />
             <Route path="/qa-approvals" element={<QaApprovalCenterPage />} />
-            {/* <Route path="/reports" element={<ReportsPage />} /> */}
+            <Route path="/reports" element={<ReportsPage />} />
             <Route path="/activity-logs" element={<AuditLogsPage />} />
             <Route path="/notifications" element={<NotificationsPage />} />
           </Route>

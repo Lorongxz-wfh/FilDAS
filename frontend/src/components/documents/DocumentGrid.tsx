@@ -86,7 +86,7 @@ export function DocumentGrid({
                   </>
                 ) : (
                   <>
-                    {/* Folders: Open, Details, Download, Rename, Copy, Move, Archive */}
+                    {/* Folders: Open, Details, Download, Rename, Copy, Move, Trash */}
                     {item.kind === "folder" && (
                       <DropdownMenu.Item
                         onClick={() => onDoubleClickItem(item)}
@@ -113,7 +113,7 @@ export function DocumentGrid({
                       </DropdownMenu.Item>
                     )}
 
-                    {/* Files: Details, Download, Rename, Copy, Move, Archive */}
+                    {/* Files: Details, Download, Rename, Copy, Move, Trash */}
                     <DropdownMenu.Item onClick={() => onRename(item)}>
                       Rename
                     </DropdownMenu.Item>
@@ -134,7 +134,7 @@ export function DocumentGrid({
                       destructive
                       onClick={() => onDelete(item)}
                     >
-                      Archive
+                      Trash
                     </DropdownMenu.Item>
                   </>
                 )}

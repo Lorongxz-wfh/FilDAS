@@ -90,6 +90,15 @@ export default function Sidebar({
             </Button>
 
             <Button
+              variant={itemVariant(activePage === "reports")}
+              size="sm"
+              className="w-full justify-start"
+              onClick={() => onNavigate("reports")}
+            >
+              Reports
+            </Button>
+
+            <Button
               variant={itemVariant(activePage === "activity-logs")}
               size="sm"
               className="w-full justify-start"

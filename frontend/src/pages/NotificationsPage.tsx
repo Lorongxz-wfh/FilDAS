@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { Button } from "../components/ui/Button";
 
@@ -34,6 +35,8 @@ export default function NotificationsPage() {
   const [meta, setMeta] = useState<NotificationsResponse["meta"] | null>(null);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
+
+  const navigate = useNavigate();
 
   const loadPage = async (pageNum: number) => {
     try {
@@ -91,10 +94,17 @@ export default function NotificationsPage() {
     }
     if (n.type === "ItemUpdatedNotification") {
       const change = n.data.change_type || "updated";
-      return `${n.data.updated_by || "Someone"} ${change} your ${
-        n.data.item_type || "item"
-      } "${n.data.item_name || "Untitled"}".`;
+      const actor = n.data.updated_by || "Someone";
+      const itemType = n.data.item_type || "item";
+      const itemName = n.data.item_name || "Untitled";
+
+      if (change === "submitted for QA review") {
+        return `${actor} submitted the ${itemType} "${itemName}" for QA review.`;
+      }
+
+      return `${actor} ${change} your ${itemType} "${itemName}".`;
     }
+
     return "You have a new notification.";
   };
 
@@ -132,7 +142,30 @@ export default function NotificationsPage() {
                     isUnread ? "bg-slate-900/80" : "bg-slate-900"
                   }`}
                 >
-                  <div>
+                  <button
+                    className="flex-1 text-left"
+                    onClick={async () => {
+                      await handleMarkOneAsRead(n);
+                      const { item_type, item_id } = n.data;
+                      if (n.type === "ItemSharedNotification") {
+                        if (item_type === "document" && item_id) {
+                          navigate(`/shared?type=document&id=${item_id}`);
+                        } else if (item_type === "folder" && item_id) {
+                          navigate(`/shared?type=folder&id=${item_id}`);
+                        } else {
+                          navigate("/shared");
+                        }
+                      } else if (n.type === "ItemUpdatedNotification") {
+                        if (item_type === "document" && item_id) {
+                          navigate(`/documents?docId=${item_id}`);
+                        } else if (item_type === "folder" && item_id) {
+                          navigate(`/documents?folderId=${item_id}`);
+                        } else {
+                          navigate("/documents");
+                        }
+                      }
+                    }}
+                  >
                     <p
                       className={`text-xs ${
                         isUnread ? "text-slate-50" : "text-slate-300"
@@ -143,7 +176,7 @@ export default function NotificationsPage() {
                     <p className="mt-0.5 text-[10px] text-slate-500">
                       {new Date(n.created_at).toLocaleString()}
                     </p>
-                  </div>
+                  </button>
                   {isUnread && (
                     <button
                       onClick={() => handleMarkOneAsRead(n)}

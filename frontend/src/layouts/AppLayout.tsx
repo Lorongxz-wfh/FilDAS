@@ -5,6 +5,7 @@ import Sidebar from "../components/Sidebar";
 import TopNav from "../components/TopNav";
 import type { PageKey } from "../types/navigation";
 import { useCurrentUser } from "../lib/useCurrentUser";
+import { ToastContainer } from "../components/ui/ToastContainer";
 
 const pathToPageKey = (pathname: string): PageKey => {
   switch (pathname) {
@@ -18,17 +19,18 @@ const pathToPageKey = (pathname: string): PageKey => {
       return "shared";
     case "/users":
       return "users";
-    case "/archive":
-      return "archive";
+    case "/trash":
+      return "trash";
     case "/departments":
       return "departments";
     case "/activity-logs":
       return "activity-logs";
+    case "/reports":
+      return "reports";
     default:
       return "dashboard";
   }
 };
-
 
 function AppLayout() {
   const location = useLocation();
@@ -44,26 +46,29 @@ function AppLayout() {
   const isDepartmentAdmin = roleName === "Admin";
   const isAdminOrSuper = isSuperAdmin || isDepartmentAdmin;
 
+  // QA flags based on department + role
+  const deptIsQa = !!user?.department?.is_qa;
+  const isQa = deptIsQa; // any member of a QA department
+  const isQaAdmin = deptIsQa && isDepartmentAdmin;
 
   useEffect(() => {
     setActivePage(pathToPageKey(location.pathname));
   }, [location.pathname]);
 
-const handleNavigate = (page: PageKey) => {
-  const pageToPath: Record<PageKey, string> = {
-    dashboard: "/dashboard",
-    "qa-approvals": "/qa-approvals",
-    documents: "/documents",
-    shared: "/shared",
-    departments: "/departments",
-    users: "/users",
-    archive: "/archive",
-    "activity-logs": "/activity-logs",
+  const handleNavigate = (page: PageKey) => {
+    const pageToPath: Record<PageKey, string> = {
+      dashboard: "/dashboard",
+      "qa-approvals": "/qa-approvals",
+      documents: "/documents",
+      shared: "/shared",
+      departments: "/departments",
+      users: "/users",
+      trash: "/trash",
+      "activity-logs": "/activity-logs",
+      reports: "/reports",
+    };
+    navigate(pageToPath[page]);
   };
-  navigate(pageToPath[page]);
-};
-
-
 
   const handleLogout = () => {
     window.location.href = "/login";
@@ -71,8 +76,13 @@ const handleNavigate = (page: PageKey) => {
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-slate-950 text-slate-200">
-        Loading…
+      <div className="flex h-screen items-center justify-center bg-[#0e1134]">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-10 w-10 rounded-full border-2 border-[#e7eaef]/30 border-t-[#e7eaef] animate-spin" />
+          <p className="text-sm font-medium text-[#e7eaef]">
+            Signing you in to FilDAS…
+          </p>
+        </div>
       </div>
     );
   }
@@ -84,6 +94,9 @@ const handleNavigate = (page: PageKey) => {
 
   return (
     <div className="flex h-screen flex-col bg-slate-950">
+      {/* Global toast popup */}
+      <ToastContainer />
+
       <TopNav onLogout={handleLogout} />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
@@ -91,17 +104,17 @@ const handleNavigate = (page: PageKey) => {
           onNavigate={handleNavigate}
           isAdmin={isAdminOrSuper}
           isSuperAdmin={isSuperAdmin}
-          isQa={false}
+          isQa={isQa}
         />
 
         <main className="flex-1 overflow-auto p-6">
           <Outlet
             context={{
               user,
-              // For pages that only care about “can see admin things”
               isAdmin: isAdminOrSuper,
-              // If a page wants to know if this is truly global Super Admin:
               isSuperAdmin,
+              isQa,
+              isQaAdmin,
             }}
           />
         </main>

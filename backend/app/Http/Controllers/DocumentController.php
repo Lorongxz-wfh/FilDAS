@@ -13,23 +13,21 @@ use Illuminate\Support\Facades\Log;
 use App\Notifications\ItemUpdatedNotification;
 use Illuminate\Support\Facades\Auth;
 
-
-
-
 class DocumentController extends Controller
 {
-    public function index(Request $request)
+    /**
+     * Apply common filters: department_id, folder_id, search.
+     */
+    protected function applyCommonDocumentFilters($query, Request $request)
     {
-        $user  = $request->user();
-        $query = Document::with(['folder', 'uploadedBy', 'owner'])
-            ->notArchived(); // exclude archived docs by default
-
         if ($request->has('department_id')) {
             $query->where('department_id', $request->department_id);
         }
+
         if ($request->has('folder_id')) {
             $query->where('folder_id', $request->folder_id);
         }
+
         if ($request->has('search')) {
             $search = $request->search;
             $query->where(function ($q) use ($search) {
@@ -39,18 +37,22 @@ class DocumentController extends Controller
             });
         }
 
-        // Visibility rules with status:
-        // - Super Admin: all non-archived documents (any status).
-        // - Admin: all non-archived documents in their own department (any status).
-        // - Staff:
-        //     * Always see documents they uploaded or own (any status).
-        //     * In their department: only approved documents.
-        //     * Shared documents: only approved documents.
+        return $query;
+    }
+
+    public function index(Request $request)
+    {
+        $user  = $request->user();
+        $query = Document::with(['folder', 'uploadedBy', 'owner'])
+            ->notTrashed(); // exclude trashed docs by default
+
+        $this->applyCommonDocumentFilters($query, $request);
+
         $isSuperAdmin = $user->isSuperAdmin();
         $isAdmin      = $user->isAdmin();
 
         if ($isSuperAdmin) {
-            // No extra restriction; can see any non-archived doc.
+            // No extra restriction; can see any non-trashed doc.
         } elseif ($isAdmin) {
             // Department admin: all docs in their department, regardless of status.
             if ($user->department_id) {
@@ -93,7 +95,6 @@ class DocumentController extends Controller
             });
         }
 
-
         $sortBy    = $request->get('sort_by', 'uploaded_at');
         $sortOrder = $request->get('sort_order', 'desc');
         $query->orderBy($sortBy, $sortOrder);
@@ -102,12 +103,13 @@ class DocumentController extends Controller
         return response()->json($documents);
     }
 
-    public function archiveIndex(Request $request)
+
+    public function trashIndex(Request $request)
     {
         $user = $request->user();
 
-        $query = Document::with(['folder', 'uploadedBy', 'owner'])
-            ->archived();
+        $query = Document::with(['folder', 'uploadedBy', 'owner', 'department'])
+            ->trashed();
 
         if ($request->has('department_id')) {
             $query->where('department_id', $request->department_id);
@@ -125,9 +127,9 @@ class DocumentController extends Controller
         }
 
         // Visibility:
-        // - Super Admin: all archived documents.
-        // - Admin: archived documents in their own department.
-        // - Staff: archived documents they own or uploaded.
+        // - Super Admin: all trashd documents.
+        // - Admin: trashd documents in their own department.
+        // - Staff: trashd documents they own or uploaded.
         $isSuperAdmin = $user->isSuperAdmin();
         $isAdmin      = $user->isAdmin();
 
@@ -268,6 +270,31 @@ class DocumentController extends Controller
             );
         }
 
+        // Notify QA users that a new document needs review.
+        // All users whose department is marked as QA, EXCLUDING super admins.
+        $qaUsers = \App\Models\User::whereHas('department', function ($q) {
+            $q->where('is_qa', true);
+        })
+            ->whereDoesntHave('role', function ($q) {
+                $q->where('name', 'Super Admin');
+            })
+            ->get();
+
+        if ($qaUsers->isNotEmpty()) {
+            $itemType     = 'document';
+            $itemName     = $document->title ?? $document->original_filename ?? 'Untitled document';
+            $uploaderName = $user->name ?? 'Someone';
+
+            foreach ($qaUsers as $qaUser) {
+                $qaUser->notify(new ItemUpdatedNotification(
+                    $itemType,
+                    $itemName,
+                    'submitted for QA review',
+                    $uploaderName,
+                    $document->id
+                ));
+            }
+        }
 
         return response()->json(
             $document->load(['folder', 'uploadedBy', 'owner']),
@@ -292,10 +319,8 @@ class DocumentController extends Controller
         $user = $request->user();
 
         // Re-evaluate live permission on every update
-        $effectivePerm = $this->getEffectivePermissionForUser($document, $user);
-        $isOwner =
-            (int) $document->owner_id === (int) $user->id ||
-            (int) $document->uploaded_by === (int) $user->id;
+        [$effectivePerm, $isOwner] = $this->computeDocumentMutationContext($document, $user);
+
 
         // Viewers cannot modify anything
         if ($effectivePerm === 'viewer') {
@@ -353,42 +378,39 @@ class DocumentController extends Controller
         return response()->json($document->load(['folder', 'uploadedBy', 'owner']));
     }
 
-    public function archive(Request $request, Document $document)
+    public function trash(Request $request, Document $document)
     {
         $user = $request->user();
 
-        $effectivePerm = $this->getEffectivePermissionForUser($document, $user);
-        $isOwner =
-            (int) $document->owner_id === (int) $user->id ||
-            (int) $document->uploaded_by === (int) $user->id;
+        [$effectivePerm, $isOwner] = $this->computeDocumentMutationContext($document, $user);
 
-        // Viewers cannot archive
+        // Viewers cannot move to trash
         if ($effectivePerm === 'viewer') {
             return response()->json(['error' => 'Forbidden'], 403);
         }
 
-        // Contributors can only archive their own documents
+        // Contributors can only trash their own documents
         if ($effectivePerm === 'contributor' && !$isOwner) {
             return response()->json(['error' => 'Forbidden'], 403);
         }
 
-        // Already archived => no-op
-        if ($document->archived_at) {
-            return response()->json(['message' => 'Already archived'], 200);
+        // Already trashed => no-op
+        if ($document->trashed_at) {
+            return response()->json(['message' => 'Already trashed'], 200);
         }
 
-        $document->archived_at = now();
+        $document->trashed_at = now();
         $document->save();
 
         ActivityLogger::log(
             $document,
-            'archived',
-            'Document archived',
+            'trashed',
+            'Document moved to trash',
             $user->id
         );
 
         return response()->json([
-            'message'  => 'Document archived',
+            'message'  => 'Document moved to trash',
             'document' => $document->fresh(['folder', 'uploadedBy', 'owner']),
         ]);
     }
@@ -397,12 +419,9 @@ class DocumentController extends Controller
     {
         $user = $request->user();
 
-        $effectivePerm = $this->getEffectivePermissionForUser($document, $user);
-        $isOwner =
-            (int) $document->owner_id === (int) $user->id ||
-            (int) $document->uploaded_by === (int) $user->id;
+        [$effectivePerm, $isOwner] = $this->computeDocumentMutationContext($document, $user);
 
-        // Same permissions as archive/delete
+        // Same permissions as trash/delete
         if ($effectivePerm === 'viewer') {
             return response()->json(['error' => 'Forbidden'], 403);
         }
@@ -411,17 +430,17 @@ class DocumentController extends Controller
             return response()->json(['error' => 'Forbidden'], 403);
         }
 
-        if (!$document->archived_at) {
-            return response()->json(['message' => 'Not archived'], 200);
+        if (!$document->trashed_at) {
+            return response()->json(['message' => 'Not in trash'], 200);
         }
 
-        $document->archived_at = null;
+        $document->trashed_at = null;
         $document->save();
 
         ActivityLogger::log(
             $document,
             'restored',
-            'Document restored from archive',
+            'Document restored from trash',
             $user->id
         );
 
@@ -435,10 +454,7 @@ class DocumentController extends Controller
     {
         $user = $request->user();
 
-        $effectivePerm = $this->getEffectivePermissionForUser($document, $user);
-        $isOwner =
-            (int) $document->owner_id === (int) $user->id ||
-            (int) $document->uploaded_by === (int) $user->id;
+        [$effectivePerm, $isOwner] = $this->computeDocumentMutationContext($document, $user);
 
         // Viewers cannot delete
         if ($effectivePerm === 'viewer') {
@@ -476,10 +492,11 @@ class DocumentController extends Controller
 
     public function stream(Document $document)
     {
-        // Do not allow streaming archived documents
-        if ($document->archived_at) {
-            abort(403, 'Document is archived');
+        // Do not allow streaming trashed documents
+        if ($document->trashed_at) {
+            abort(403, 'Document is in trash');
         }
+
 
         $disk = Storage::disk('fildas_docs');
         $path = $document->file_path;
@@ -603,9 +620,9 @@ class DocumentController extends Controller
 
     public function download(Document $document)
     {
-        // Do not allow downloading archived documents from normal flows
-        if ($document->archived_at) {
-            abort(403, 'Document is archived');
+        // Do not allow downloading trashed documents from normal flows
+        if ($document->trashed_at) {
+            abort(403, 'Document is in trash');
         }
 
         $disk = Storage::disk('fildas_docs');
@@ -624,7 +641,8 @@ class DocumentController extends Controller
 
     public function statistics()
     {
-        $baseQuery = Document::whereNull('archived_at');
+        $baseQuery = Document::whereNull('trashed_at');
+
 
         $stats = [
             'total_documents'   => (clone $baseQuery)->count(),
@@ -641,6 +659,16 @@ class DocumentController extends Controller
         ];
 
         return response()->json($stats);
+    }
+
+    protected function computeDocumentMutationContext(Document $document, $user): array
+    {
+        $effectivePerm = $this->getEffectivePermissionForUser($document, $user);
+        $isOwner =
+            (int) $document->owner_id === (int) $user->id ||
+            (int) $document->uploaded_by === (int) $user->id;
+
+        return [$effectivePerm, $isOwner];
     }
 
     protected function getDocumentSharePermissionForUser(Document $document, $user): ?string
@@ -693,7 +721,6 @@ class DocumentController extends Controller
 
         return 'viewer';
     }
-
 
     public function move(Request $request, Document $document)
     {
@@ -765,11 +792,18 @@ class DocumentController extends Controller
         }
         $document->save();
 
+        $oldDeptId = $document->getOriginal('department_id');
+
         $details = $targetFolder
             ? 'Moved to folder "' . $targetFolder->name . '"'
             : 'Moved to department root';
 
-        ActivityLogger::log($document, 'updated', $details);
+        if ($isSuper && $newDeptId !== $oldDeptId) {
+            $details .= sprintf(' (Department: %d → %d)', $oldDeptId, $newDeptId);
+        }
+
+        ActivityLogger::log($document, 'updated', $details, $user->id);
+
 
         if ($targetFolder) {
             ActivityLogger::log(
@@ -803,11 +837,6 @@ class DocumentController extends Controller
         $isOwner             = (int) $document->owner_id === (int) $user->id
             || (int) $document->uploaded_by === (int) $user->id;
 
-        // Allow copy if:
-        // - super admin, OR
-        // - same department, OR
-        // - shared editor, OR
-        // - shared contributor AND owner
         if (
             !$isSuper &&
             !$sameDept &&
@@ -870,10 +899,89 @@ class DocumentController extends Controller
         ]);
     }
 
-    /**
-     * GET /qa/approvals
-     * List documents for QA (Super Admin + all QA members).
-     */
+    public function selfAssign(Request $request, Document $document)
+    {
+        $user = $request->user();
+
+        // Only QA members or Super Admin can self-assign
+        if (!$user->isSuperAdmin() && !$user->isQa()) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        if ($document->trashed_at) {
+            return response()->json(['error' => 'Cannot assign trashed document'], 400);
+        }
+
+        // Optional: allow assignment only while pending
+        if ($document->status !== 'pending') {
+            return response()->json(['error' => 'Only pending documents can be assigned'], 400);
+        }
+
+        $document->assigned_to = $user->id;
+        $document->save();
+
+        ActivityLogger::log(
+            $document,
+            'assigned',
+            'Document assigned to ' . ($user->name ?? 'QA user'),
+            $user->id
+        );
+
+        return response()->json($document->fresh(['department', 'uploadedBy', 'owner']));
+    }
+
+    public function assign(Request $request, Document $document)
+    {
+        $user = $request->user();
+
+        // Only Super Admin or QA Admin can assign others
+        if (!$user->isSuperAdmin() && !$user->isQaAdmin()) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        if ($document->trashed_at) {
+            return response()->json(['error' => 'Cannot assign trashed document'], 400);
+        }
+
+        if ($document->status !== 'pending') {
+            return response()->json(['error' => 'Only pending documents can be assigned'], 400);
+        }
+
+        $data = $request->validate([
+            'user_id' => 'required|exists:users,id',
+        ]);
+
+        $assignee = \App\Models\User::findOrFail($data['user_id']);
+
+        // Optional: ensure assignee is in a QA department (or is Super Admin)
+        if (!$assignee->isSuperAdmin() && !$assignee->isQa()) {
+            return response()->json(['error' => 'Assignee must be a QA member'], 422);
+        }
+
+        $document->assigned_to = $assignee->id;
+        $document->save();
+
+        ActivityLogger::log(
+            $document,
+            'assigned',
+            'Document assigned to ' . ($assignee->name ?? 'QA user'),
+            $user->id
+        );
+
+        // Notify the assignee
+        $itemType = 'document';
+        $itemName = $document->title ?? $document->original_filename ?? 'Untitled document';
+
+        $assignee->notify(new ItemUpdatedNotification(
+            $itemType,
+            $itemName,
+            'assigned to you',
+            $user->name ?? 'QA Admin',
+            $document->id
+        ));
+
+        return response()->json($document->fresh(['department', 'uploadedBy', 'owner']));
+    }
     public function qaIndex(Request $request)
     {
         $user = $request->user();
@@ -887,8 +995,8 @@ class DocumentController extends Controller
         $deptId = $request->get('department_id');
         $search = $request->get('q');
 
-        $query = Document::with(['department', 'uploadedBy', 'owner'])
-            ->notArchived();
+        $query = Document::with(['department', 'uploadedBy', 'owner', 'approvedBy', 'assignedTo'])
+            ->notTrashed();
 
         if ($status !== 'all') {
             $query->where('status', $status);
@@ -933,9 +1041,10 @@ class DocumentController extends Controller
             return response()->json(['error' => 'Forbidden'], 403);
         }
 
-        if ($document->archived_at) {
-            return response()->json(['error' => 'Cannot approve archived document'], 400);
+        if ($document->trashed_at) {
+            return response()->json(['error' => 'Cannot approve trashed document'], 400);
         }
+
 
         $document->status      = 'approved';
         $document->approved_by = $user->id;
@@ -948,6 +1057,26 @@ class DocumentController extends Controller
             'Document approved',
             $user->id
         );
+
+        // Notify uploader/owner
+        $document->loadMissing(['uploadedBy', 'owner']);
+        $owner = $document->owner ?? $document->uploadedBy ?? null;
+
+        if ($owner) {
+            $itemType = 'document';
+            $itemName = $document->title ?? $document->original_filename ?? 'Untitled document';
+
+            // Correct changeType for approval
+            $changeType = 'approved';
+
+            $owner->notify(new ItemUpdatedNotification(
+                $itemType,
+                $itemName,
+                $changeType,
+                $user->name ?? 'QA',
+                $document->id
+            ));
+        }
 
         return response()->json($document->fresh(['folder', 'uploadedBy', 'owner']));
     }
@@ -964,8 +1093,8 @@ class DocumentController extends Controller
             return response()->json(['error' => 'Forbidden'], 403);
         }
 
-        if ($document->archived_at) {
-            return response()->json(['error' => 'Cannot reject archived document'], 400);
+        if ($document->trashed_at) {
+            return response()->json(['error' => 'Cannot reject trashed document'], 400);
         }
 
         $reason = $request->input('reason'); // optional for now
@@ -986,6 +1115,26 @@ class DocumentController extends Controller
             $details,
             $user->id
         );
+
+        // Notify uploader/owner
+        $document->loadMissing(['uploadedBy', 'owner']);
+        $owner = $document->owner ?? $document->uploadedBy ?? null;
+
+        if ($owner) {
+            $itemType = 'document';
+            $itemName = $document->title ?? $document->original_filename ?? 'Untitled document';
+
+            // Include reason in changeType label if present
+            $changeType = $reason ? 'rejected: ' . $reason : 'rejected';
+
+            $owner->notify(new ItemUpdatedNotification(
+                $itemType,
+                $itemName,
+                $changeType,
+                $user->name ?? 'QA',
+                $document->id
+            ));
+        }
 
         return response()->json($document->fresh(['folder', 'uploadedBy', 'owner']));
     }

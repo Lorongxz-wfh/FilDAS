@@ -47,7 +47,14 @@ class NotificationController extends Controller
         $user = $request->user();
 
         $notification = $user->notifications()->where('id', $id)->firstOrFail();
-        $notification->markAsRead(); // sets read_at timestamp [web:268][web:293]
+        $notification->markAsRead(); // sets read_at timestamp
+
+        // Optional audit: record that user read a notification
+        // ActivityLogger::log(
+        //     $user,
+        //     'notification_read',
+        //     'Notification read: ' . class_basename($notification->type) . ' (' . $notification->id . ')'
+        // );
 
         return response()->json(['success' => true]);
     }

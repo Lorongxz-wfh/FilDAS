@@ -1,7 +1,9 @@
 // src/pages/UserManagerPage.tsx
 import { useEffect, useState } from "react";
 import Modal from "../components/Modal";
+import { Loader } from "../components/ui/Loader";
 import { api } from "../lib/api";
+import { notify } from "../lib/notify";
 
 type UserFormMode = "create" | "edit";
 
@@ -105,7 +107,7 @@ export default function UserManagerPage() {
       setUserDetails(res.data);
     } catch (e) {
       console.error(e);
-      alert("Failed to load user details.");
+      notify("Failed to load user details.", "error");
       setUserDetails(null);
     } finally {
       setDetailsLoading(false);
@@ -169,11 +171,9 @@ export default function UserManagerPage() {
     e.preventDefault();
     setSubmitting(true);
     setErrorMsg(null);
-
     try {
       const role_id = ROLE_NAME_TO_ID[form.role];
 
-      // backend can decide how to map UI "inactive" to its raw status column
       const rawStatus = form.status === "inactive" ? "disabled" : "active";
 
       if (userModalMode === "create") {
@@ -185,6 +185,7 @@ export default function UserManagerPage() {
           status: rawStatus,
           password: form.password,
         });
+        notify(`User "${form.name}" created.`, "success");
       } else {
         await api.put(`/users/${form.id}`, {
           name: form.name,
@@ -194,6 +195,7 @@ export default function UserManagerPage() {
           status: rawStatus,
           ...(form.password ? { password: form.password } : {}),
         });
+        notify(`User "${form.name}" updated.`, "success");
       }
 
       await loadUsers();
@@ -201,7 +203,11 @@ export default function UserManagerPage() {
       setForm(EMPTY_FORM);
     } catch (err) {
       console.error(err);
-      setErrorMsg("Could not save user. Please check the form and try again.");
+      const msg =
+        (err as any)?.response?.data?.message ??
+        "Could not save user. Please check the form and try again.";
+      setErrorMsg(msg);
+      notify(msg, "error");
     } finally {
       setSubmitting(false);
     }
@@ -217,9 +223,15 @@ export default function UserManagerPage() {
         status: rawStatus,
       });
       await loadUsers();
+      notify(
+        `User "${user.name}" is now ${
+          nextStatus === "active" ? "active" : "inactive"
+        }.`,
+        "success"
+      );
     } catch (err) {
       console.error(err);
-      alert("Failed to update user status.");
+      notify("Failed to update user status.", "error");
     }
   };
 
@@ -231,12 +243,14 @@ export default function UserManagerPage() {
     ) {
       return;
     }
+
     try {
       await api.delete(`/users/${user.id}`);
       await loadUsers();
+      notify(`User "${user.name}" has been deleted.`, "success");
     } catch (err) {
       console.error(err);
-      alert("Failed to delete user.");
+      notify("Failed to delete user.", "error");
     }
   };
 
@@ -307,9 +321,6 @@ export default function UserManagerPage() {
             >
               + New user
             </button>
-            <button className="rounded-md border border-slate-700 px-3 py-2 text-sm text-white hover:bg-slate-800">
-              Bulk actions
-            </button>
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -362,19 +373,6 @@ export default function UserManagerPage() {
                 </option>
               ))}
             </select>
-            <select
-              className="rounded-md border border-slate-700 bg-slate-900/60 px-2 py-2 text-sm text-white focus:outline-none"
-              value={sortMode}
-              onChange={(e) =>
-                setSortMode(
-                  e.target.value as "dept-role-name" | "role-name" | "name"
-                )
-              }
-            >
-              <option value="dept-role-name">Dept → Role → Name</option>
-              <option value="role-name">Role → Name</option>
-              <option value="name">Name (A–Z)</option>
-            </select>
           </div>
         </div>
 
@@ -411,11 +409,8 @@ export default function UserManagerPage() {
                 <tbody className="divide-y divide-slate-800">
                   {loading && (
                     <tr>
-                      <td
-                        colSpan={6}
-                        className="py-4 text-center text-sm text-slate-500"
-                      >
-                        Loading users…
+                      <td colSpan={6} className="py-4 text-center">
+                        <Loader label="Loading users..." size="sm" />
                       </td>
                     </tr>
                   )}
@@ -522,7 +517,9 @@ export default function UserManagerPage() {
               )}
 
               {detailsOpen && detailsLoading && (
-                <p className="text-xs text-slate-500">Loading details…</p>
+                <div className="py-4 text-center">
+                  <Loader label="Loading details..." size="sm" />
+                </div>
               )}
 
               {detailsOpen && !detailsLoading && userDetails && (

@@ -21,7 +21,7 @@ class FolderController extends Controller
     {
         $user  = $request->user();
         $query = Folder::query()
-            ->notArchived(); // exclude archived folders by default
+            ->notTrashed(); // exclude trashed folders by default
 
         if ($request->filled('department_id')) {
             $query->where('department_id', $request->department_id);
@@ -57,12 +57,12 @@ class FolderController extends Controller
         return response()->json($folders);
     }
 
-    public function archiveIndex(Request $request)
+    public function trashIndex(Request $request)
     {
         $user = $request->user();
 
         $query = Folder::with(['department', 'owner'])
-            ->archived();
+            ->trashed();
 
         if ($request->filled('department_id')) {
             $query->where('department_id', $request->department_id);
@@ -73,9 +73,9 @@ class FolderController extends Controller
         }
 
         // Visibility:
-        // - Super Admin: all archived folders.
-        // - Admin: archived folders in their own department.
-        // - Staff: only archived folders they own.
+        // - Super Admin: all trashd folders.
+        // - Admin: trashd folders in their own department.
+        // - Staff: only trashd folders they own.
         $roleName     = $user->role->name ?? '';
         $isSuperAdmin = $roleName === 'Super Admin';
         $isAdmin      = $roleName === 'Admin';
@@ -99,6 +99,202 @@ class FolderController extends Controller
 
         return response()->json($folders);
     }
+
+    public function trashContents(Request $request, Folder $folder)
+    {
+        $user = $request->user();
+
+        // Must be looking at a trashed folder
+        if (!$folder->trashed_at) {
+            return response()->json([
+                'message' => 'Folder is not in trash',
+            ], 400);
+        }
+
+
+        // Permission check: reuse same model as trash/restore
+        $roleName     = $user->role->name ?? '';
+        $isSuperAdmin = $roleName === 'Super Admin';
+        $isAdmin      = $roleName === 'Admin';
+        $sameDept     = $folder->department_id === $user->department_id;
+        $sharePerm    = $this->getFolderSharePermissionForUser($folder, $user);
+        $isSharedEditor = $sharePerm === 'editor';
+
+        if (!$isSuperAdmin && !$sameDept && !$isSharedEditor) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        // Trashed child folders (direct children)
+        $childFolders = Folder::with(['owner', 'department'])
+            ->trashed()
+            ->where('parent_id', $folder->id)
+            ->orderBy('name')
+            ->get()
+            ->map(function (Folder $f) {
+                return [
+                    'id'              => $f->id,
+                    'name'            => $f->name,
+                    'department_name' => $f->department?->name,
+                    'owner_name'      => $f->owner?->name,
+                ];
+            });
+
+        // Trashed documents directly in this folder
+        $documents = Document::with(['owner', 'department'])
+            ->trashed()
+            ->where('folder_id', $folder->id)
+            ->orderBy('title')
+            ->get()
+            ->map(function (Document $d) {
+                return [
+                    'id'                => $d->id,
+                    'title'             => $d->title,
+                    'original_filename' => $d->original_filename,
+                    'department_name'   => $d->department?->name,
+                    'owner_name'        => $d->owner?->name ?? $d->uploadedBy?->name,
+                ];
+            });
+
+        return response()->json([
+            'folder'    => [
+                'id'              => $folder->id,
+                'name'            => $folder->name,
+                'department_name' => $folder->department?->name,
+                'owner_name'      => $folder->owner?->name,
+            ],
+            'folders'   => $childFolders,
+            'documents' => $documents,
+        ]);
+    }
+
+
+    public function trashTree(Request $request)
+    {
+        $user = $request->user();
+
+        // 1) Base query: trashed folders with visibility rules (same as trashIndex)
+        $query = Folder::with(['department', 'owner'])
+            ->trashed();
+
+        if ($request->filled('department_id')) {
+            $query->where('department_id', $request->department_id);
+        }
+
+        // Visibility:
+        // - Super Admin: all trashd folders.
+        // - Admin: trashd folders in their own department.
+        // - Staff: only trashd folders they own.
+        $roleName     = $user->role->name ?? '';
+        $isSuperAdmin = $roleName === 'Super Admin';
+        $isAdmin      = $roleName === 'Admin';
+
+        if ($isSuperAdmin) {
+            // no extra filter
+        } elseif ($isAdmin) {
+            if ($user->department_id) {
+                $query->where('department_id', $user->department_id);
+            } else {
+                $query->whereRaw('1 = 0');
+            }
+        } else {
+            $query->where('owner_id', $user->id);
+        }
+
+        $folders = $query->get();
+
+        if ($folders->isEmpty()) {
+            return response()->json([]);
+        }
+
+        // 2) Load trashd documents under these folders
+        $folderIds = $folders->pluck('id')->all();
+
+        // Docs in trashed folders
+        $documentsInFolders = Document::with(['owner', 'department'])
+            ->trashed()
+            ->whereIn('folder_id', $folderIds)
+            ->get();
+
+        // Docs trashed individually (no folder)
+        $rootDocuments = Document::with(['owner', 'department'])
+            ->trashed()
+            ->whereNull('folder_id')
+            ->get();
+
+        // 3) Index folders and docs by parent
+        $foldersById = $folders->keyBy('id');
+
+        $childrenFolders = [];
+        foreach ($folders as $folder) {
+            $parentId = $folder->parent_id;
+            $childrenFolders[$parentId][] = $folder;
+        }
+
+        $docsByFolder = [];
+        foreach ($documentsInFolders as $doc) {
+            $docsByFolder[$doc->folder_id][] = $doc;
+        }
+
+
+        // 4) Recursive builder
+        $buildNode = function (Folder $folder) use (&$buildNode, $childrenFolders, $docsByFolder): array {
+            $folderChildren = $childrenFolders[$folder->id] ?? [];
+            $docChildren    = $docsByFolder[$folder->id] ?? [];
+
+            return [
+                'type'             => 'folder',
+                'id'               => $folder->id,
+                'name'             => $folder->name,
+                'department_name'  => $folder->department?->name,
+                'owner_name'       => $folder->owner?->name,
+                'children_folders' => array_map($buildNode, $folderChildren),
+                'children_documents' => array_map(function (Document $doc) {
+                    return [
+                        'type'             => 'document',
+                        'id'               => $doc->id,
+                        'title'            => $doc->title,
+                        'original_filename' => $doc->original_filename,
+                        'department_name'  => $doc->department?->name,
+                        'owner_name'       => $doc->owner?->name ?? $doc->uploadedBy?->name,
+                    ];
+                }, $docChildren),
+            ];
+        };
+
+        // 5) Build roots (folders whose parent is not in the trashd set)
+        $rootNodes = [];
+        foreach ($folders as $folder) {
+            $parentId = $folder->parent_id;
+            if (!$parentId || !isset($foldersById[$parentId])) {
+                $rootNodes[] = $buildNode($folder);
+            }
+        }
+
+        // 6) Add a virtual group for individually trashd documents (no folder)
+        if ($rootDocuments->isNotEmpty()) {
+            $rootNodes[] = [
+                'type'             => 'folder',
+                'id'               => 0, // synthetic id
+                'name'             => 'Trashed documents (no folder)',
+                'department_name'  => null,
+                'owner_name'       => null,
+                'children_folders' => [],
+                'children_documents' => $rootDocuments->map(function (Document $doc) {
+                    return [
+                        'type'              => 'document',
+                        'id'                => $doc->id,
+                        'title'             => $doc->title,
+                        'original_filename' => $doc->original_filename,
+                        'department_name'   => $doc->department?->name,
+                        'owner_name'        => $doc->owner?->name ?? $doc->uploadedBy?->name,
+                    ];
+                })->all(),
+            ];
+        }
+
+        return response()->json($rootNodes);
+    }
+
 
     public function store(Request $request)
     {
@@ -221,7 +417,7 @@ class FolderController extends Controller
         ]);
     }
 
-    public function archive(Request $request, Folder $folder)
+    public function trash(Request $request, Folder $folder)
     {
         $user = $request->user();
 
@@ -232,27 +428,27 @@ class FolderController extends Controller
         $isSharedEditor = $sharePerm === 'editor';
 
 
-        // Only super, same-dept owner, or shared editor can archive
+        // Only super, same-dept owner, or shared editor can move to trash
         if (!$isSuper && !$sameDept && !$isSharedEditor) {
             return response()->json(['error' => 'Forbidden'], 403);
         }
 
-        if ($folder->archived_at) {
-            return response()->json(['message' => 'Already archived'], 200);
+        if ($folder->trashed_at) {
+            return response()->json(['message' => 'Already in trash'], 200);
         }
 
-        // Archive folder + all descendants + their documents
-        $this->archiveFolderRecursively($folder);
+        // Move folder + all descendants + their documents to trash
+        $this->trashFolderRecursively($folder);
 
         ActivityLogger::log(
             $folder,
-            'archived',
-            'Folder archived with contents',
+            'trashed',
+            'Folder moved to trash with contents',
             $user->id
         );
 
         return response()->json([
-            'message' => 'Folder archived',
+            'message' => 'Folder moved to trash',
             'folder'  => $folder->fresh(['owner', 'department']),
         ]);
     }
@@ -273,13 +469,13 @@ class FolderController extends Controller
         $isSharedEditor = $sharePerm === 'editor';
 
 
-        // Same permissions as archive/delete
+        // Same permissions as trash/delete
         if (!$isSuper && !$sameDept && !$isSharedEditor) {
             return response()->json(['error' => 'Forbidden'], 403);
         }
 
-        if (!$folder->archived_at) {
-            return response()->json(['message' => 'Not archived'], 200);
+        if (!$folder->trashed_at) {
+            return response()->json(['message' => 'Not in trash'], 200);
         }
 
         // Restore folder + all descendants + their documents
@@ -288,7 +484,7 @@ class FolderController extends Controller
         ActivityLogger::log(
             $folder,
             'restored',
-            'Folder restored from archive',
+            'Folder restored from trash',
             $user->id
         );
 
@@ -351,49 +547,62 @@ class FolderController extends Controller
         $folder->delete();
     }
 
-    protected function archiveFolderRecursively(Folder $folder): void
+    protected function trashFolderRecursively(Folder $folder): void
     {
         $folder->load(['children', 'documents']);
 
-        // Archive this folder
-        if (!$folder->archived_at) {
-            $folder->archived_at = now();
+        // Trash this folder
+        if (!$folder->trashed_at) {
+            $folder->trashed_at = now();
             $folder->save();
+
+            ActivityLogger::log(
+                $folder,
+                'trashed',
+                'Folder moved to trash with parent'
+            );
         }
 
-        // Archive documents in this folder
+        // Trash documents in this folder
         foreach ($folder->documents as $document) {
-            if (!$document->archived_at) {
-                $document->archived_at = now();
+            if (!$document->trashed_at) {
+                $document->trashed_at = now();
                 $document->save();
                 ActivityLogger::log(
                     $document,
-                    'archived',
-                    'Document archived with folder'
+                    'trashed',
+                    'Document moved to trash with folder'
                 );
             }
         }
 
         // Recurse into children
         foreach ($folder->children as $child) {
-            $this->archiveFolderRecursively($child);
+            $this->trashFolderRecursively($child);
         }
     }
+
 
     protected function restoreFolderRecursively(Folder $folder): void
     {
         $folder->load(['children', 'documents']);
 
         // Restore this folder
-        if ($folder->archived_at) {
-            $folder->archived_at = null;
+        if ($folder->trashed_at) {
+            $folder->trashed_at = null;
             $folder->save();
+
+            ActivityLogger::log(
+                $folder,
+                'restored',
+                'Folder restored with parent'
+            );
         }
 
         // Restore documents in this folder
         foreach ($folder->documents as $document) {
-            if ($document->archived_at) {
-                $document->archived_at = null;
+            if ($document->trashed_at) {
+                $document->trashed_at = null;
                 $document->save();
                 ActivityLogger::log(
                     $document,
@@ -424,8 +633,8 @@ class FolderController extends Controller
                 $queue        = $childIds;
             }
 
-            // Only include non-archived documents in the ZIP
-            $documents = Document::whereNull('archived_at')
+            // Only include non-trashed documents in the ZIP
+            $documents = Document::whereNull('trashed_at')
                 ->whereIn('folder_id', $allFolderIds)
                 ->get();
 
@@ -581,11 +790,18 @@ class FolderController extends Controller
             }
         });
 
+        $oldDeptId = $folder->getOriginal('department_id');
+
         $details = $targetFolder
             ? 'Moved to folder "' . $targetFolder->name . '"'
             : 'Moved to department root';
 
-        ActivityLogger::log($folder, 'updated', $details);
+        if ($isSuper && $newDeptId !== $oldDeptId) {
+            $details .= sprintf(' (Department: %d → %d)', $oldDeptId, $newDeptId);
+        }
+
+        ActivityLogger::log($folder, 'updated', $details, $user->id);
+
 
         // log on the new parent folder, if any
         if ($targetFolder) {

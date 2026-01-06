@@ -50,15 +50,41 @@ class ItemUpdatedNotification extends Notification
      */
     public function toMail(object $notifiable): MailMessage
     {
-        $typeLabel   = $this->itemType === 'folder' ? 'folder' : 'document';
-        $changeLabel = ucfirst($this->changeType);
+        $typeLabel = $this->itemType === 'folder' ? 'folder' : 'document';
+
+        // Human‑friendly labels for common change types
+        $reasonText = null;
+        $normalizedChange = $this->changeType;
+
+        if (str_starts_with($this->changeType, 'rejected_with_reason:')) {
+            $normalizedChange = 'rejected';
+            $reasonText = trim(substr($this->changeType, strlen('rejected_with_reason:')));
+        }
+
+        $subjectLabel = match ($normalizedChange) {
+            'submitted for QA review' => 'submitted for QA review',
+            'approved'                => 'approved',
+            'rejected'                => 'rejected',
+            default                   => $normalizedChange,
+        };
 
         $url = url('/files'); // For now, edits send owners to Document Manager
 
+        // Different sentences depending on change type
+        if ($normalizedChange === 'submitted for QA review') {
+            $line = "{$this->updatedByName} submitted the {$typeLabel} \"{$this->itemName}\" for QA review.";
+        } else {
+            $line = "{$this->updatedByName} {$subjectLabel} your {$typeLabel} \"{$this->itemName}\".";
+        }
+
+        if ($normalizedChange === 'rejected' && $reasonText) {
+            $line .= ' Reason: ' . $reasonText;
+        }
+
         return (new MailMessage)
-            ->subject("{$typeLabel} {$changeLabel} in FilDAS")
+            ->subject(ucfirst($typeLabel) . ' ' . $subjectLabel . ' in FilDAS')
             ->greeting("Hello {$notifiable->name},")
-            ->line("{$this->updatedByName} {$this->changeType} your {$typeLabel} \"{$this->itemName}\".")
+            ->line($line)
             ->action('Open FilDAS', $url)
             ->line('You can review the latest changes to your files and folders in FilDAS.');
     }

@@ -131,7 +131,7 @@ export default function DocumentManagerPage() {
     setIsBusy,
     handleDownload,
     handleDownloadFolder,
-    handleArchiveSelected,
+    handleTrashSelected,
     moveSelected,
     copySelected,
   } = useDocumentActions({
@@ -412,8 +412,8 @@ export default function DocumentManagerPage() {
             setPendingAction("move");
             setMoveCopyOpen(true);
           }}
-          onArchiveSelected={() =>
-            handleArchiveSelected(selectedItem, () => {
+          onTrashSelected={() =>
+            handleTrashSelected(selectedItem, () => {
               setSelectedItem(null);
               setDetailsOpen(false);
             })
@@ -557,7 +557,7 @@ export default function DocumentManagerPage() {
                 }}
                 onDelete={(item) => {
                   setSelectedItem(item);
-                  handleArchiveSelected(item, () => {
+                  handleTrashSelected(item, () => {
                     setSelectedItem(null);
                     setDetailsOpen(false);
                   });
@@ -594,7 +594,7 @@ export default function DocumentManagerPage() {
                 }}
                 onDelete={(item) => {
                   setSelectedItem(item);
-                  handleArchiveSelected(item, () => {
+                  handleTrashSelected(item, () => {
                     setSelectedItem(null);
                     setDetailsOpen(false);
                   });

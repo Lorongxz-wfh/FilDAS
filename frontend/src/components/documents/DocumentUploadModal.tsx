@@ -2,6 +2,7 @@
 import { useState } from "react";
 import Modal from "../Modal";
 import { api } from "../../lib/api";
+import { notify } from "../../lib/notify";
 
 type Props = {
   open: boolean;
@@ -15,8 +16,9 @@ type Props = {
 type FileWithProgress = {
   file: File;
   title: string;
-  relativePath: string; // NEW: folder path like "Subfolder1/Subfolder2"
+  relativePath: string; // folder path like "Subfolder1/Subfolder2"
   status: "pending" | "uploading" | "done" | "error";
+  progress: number; // 0–100
   error?: string;
 };
 
@@ -62,12 +64,26 @@ export function DocumentUploadModal({
 
     // Enforce mode
     if (mode === "files" && hasDirectory) {
-      alert("This area only accepts files. Use “Upload folder” for folders.");
+      notify(
+        "This area only accepts files. Use “Upload folder” for folders.",
+        "info"
+      );
       return;
     }
 
     if (mode === "folder" && !hasDirectory) {
-      alert("This area expects a folder. Use “Upload files” for single files.");
+      notify(
+        "This area expects a folder with at least one file. Use “Upload files” for single files, or create empty folders via the New folder button.",
+        "info"
+      );
+      return;
+    }
+
+    if (files.length === 0) {
+      notify(
+        "No files found in this folder. Empty folders cannot be uploaded. Please add a file or create the folder manually in the app.",
+        "info"
+      );
       return;
     }
 
@@ -78,24 +94,33 @@ export function DocumentUploadModal({
     if (!e.target.files) return;
 
     const selectedFiles = Array.from(e.target.files);
-    const hasDirectory =
-      mode === "folder" &&
-      selectedFiles.some(
-        (f) =>
-          !!(f as any).webkitRelativePath &&
-          (f as any).webkitRelativePath.includes("/")
-      );
 
-    if (mode === "files" && hasDirectory) {
-      alert("This picker only accepts files. Use “Browse folder” instead.");
-      return;
+    // Any webkitRelativePath means user picked a folder (via webkitdirectory)
+    const hasRelativePath = selectedFiles.some(
+      (f) => !!(f as any).webkitRelativePath
+    );
+
+    // Files mode: block folder picks
+    if (mode === "folder") {
+      if (selectedFiles.length === 0) {
+        notify(
+          "No files found in this folder. Empty folders cannot be uploaded. Please add a file or create the folder manually in the app.",
+          "info"
+        );
+        return;
+      }
     }
 
-    if (mode === "folder" && !hasDirectory) {
-      alert(
-        "This picker expects a folder. Use “Browse files” for single files."
-      );
-      return;
+    // Folder mode: require at least one file
+    if (mode === "folder") {
+      if (selectedFiles.length === 0) {
+        alert(
+          "No files found in this folder. Empty folders cannot be uploaded. " +
+            "Please add a file or create the folder manually in the app."
+        );
+        return;
+      }
+      // Note: if there is 1 file directly in the folder, this is still valid.
     }
 
     addFiles(selectedFiles);
@@ -114,6 +139,7 @@ export function DocumentUploadModal({
         title: f.name,
         relativePath,
         status: "pending",
+        progress: 0,
       };
     });
     setFiles((prev) => [...prev, ...items]);
@@ -125,7 +151,7 @@ export function DocumentUploadModal({
 
   const handleUploadAll = async () => {
     if (!currentFolderId && !currentDepartmentId) {
-      alert("No folder or department selected.");
+      notify("No folder or department selected.", "error");
       return;
     }
 
@@ -158,11 +184,23 @@ export function DocumentUploadModal({
 
         await api.post("/documents", form, {
           headers: { "Content-Type": "multipart/form-data" },
+          onUploadProgress: (evt) => {
+            if (!evt.total) return;
+            const pct = Math.round((evt.loaded / evt.total) * 100);
+            setFiles((prev) => {
+              const copy = [...prev];
+              if (copy[i]) copy[i].progress = pct;
+              return copy;
+            });
+          },
         });
 
         setFiles((prev) => {
           const copy = [...prev];
-          copy[i].status = "done";
+          if (copy[i]) {
+            copy[i].status = "done";
+            copy[i].progress = 100;
+          }
           return copy;
         });
       } catch (e: any) {
@@ -246,22 +284,35 @@ export function DocumentUploadModal({
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-col items-end gap-1 min-w-[120px]">
+                  {item.status === "uploading" && (
+                    <>
+                      <div className="h-1.5 w-24 overflow-hidden rounded-full bg-slate-800">
+                        <div
+                          className="h-full rounded-full bg-sky-500 transition-[width]"
+                          style={{ width: `${item.progress}%` }}
+                        />
+                      </div>
+                      <span className="text-[11px] text-slate-300">
+                        {item.progress}%
+                      </span>
+                    </>
+                  )}
+
                   {item.status === "pending" && (
                     <span className="text-[11px] text-slate-400">Pending</span>
                   )}
-                  {item.status === "uploading" && (
-                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
-                  )}
+
                   {item.status === "done" && (
-                    <span className="text-[11px] text-emerald-400">✓</span>
+                    <span className="text-[11px] text-emerald-400">✓ Done</span>
                   )}
+
                   {item.status === "error" && (
                     <span
                       className="text-[11px] text-red-400"
                       title={item.error}
                     >
-                      ✕
+                      ✕ Failed
                     </span>
                   )}
 

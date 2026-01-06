@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Helpers\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use App\Notifications\ItemUpdatedNotification;
 
 class UserController extends Controller
 {
@@ -26,10 +27,28 @@ class UserController extends Controller
     {
         $this->ensureAdmin($request);
 
-        $users = User::with(['role', 'department'])
-            ->whereNull('deleted_at') // soft deleted excluded
+        $authUser = $request->user();
+
+        $query = User::with(['role', 'department'])
+            ->whereNull('deleted_at'); // soft deleted excluded
+
+        // Super Admin: see all users
+        if ($authUser->isSuperAdmin()) {
+            // no extra filter
+        } else {
+            // Admin: only users in their own department (or none if they have no department)
+            if ($authUser->department_id) {
+                $query->where('department_id', $authUser->department_id);
+            } else {
+                // admin without department sees nobody
+                $query->whereRaw('1 = 0');
+            }
+        }
+
+        $users = $query
             ->orderBy('name')
             ->get();
+
 
         return $users->map(function ($user) {
             return [
@@ -81,9 +100,15 @@ class UserController extends Controller
 
         // AUDIT
         ActivityLogger::log(
-            $user, // subject
+            $user,
             'created',
-            'User created with email ' . $user->email
+            sprintf(
+                'User created: %s (%s), role_id=%d, status=%s',
+                $user->name,
+                $user->email,
+                $user->role_id,
+                $user->status
+            )
         );
 
         return response()->json([
@@ -164,20 +189,62 @@ class UserController extends Controller
             unset($data['password']);
         }
 
+        $original = $user->getOriginal();
+
         $user->update($data);
 
         // Reload the role relationship
         $user->load('role');
 
-        // AUDIT
+        $changes = [];
+        foreach ($data as $key => $value) {
+            if ($key === 'password') {
+                $changes[] = 'password: [changed]';
+                continue;
+            }
+            if (array_key_exists($key, $original) && $original[$key] != $value) {
+                $changes[] = sprintf('%s: "%s" → "%s"', $key, (string) $original[$key], (string) $value);
+            }
+        }
+
+        $details = $changes
+            ? 'User updated: ' . $user->email . ' (' . implode('; ', $changes) . ')'
+            : 'User updated: ' . $user->email;
+
         ActivityLogger::log(
             $user,
             'updated',
-            'User updated: ' . implode(', ', array_keys($data))
+            $details
         );
 
-        return response()->json([
+        // Notify the user about their account changes
+        if (!empty($changes)) {
+            $itemType = 'user';
+            $itemName = $user->name ?? $user->email;
 
+            // Determine a high-level changeType
+            $changeType = 'updated';
+            if (str_contains(implode(' ', $changes), 'role_id')) {
+                $changeType = 'role_changed';
+            } elseif (str_contains(implode(' ', $changes), 'department_id')) {
+                $changeType = 'department_changed';
+            } elseif (str_contains(implode(' ', $changes), 'status')) {
+                $changeType = 'status_changed';
+            } elseif (str_contains(implode(' ', $changes), 'password')) {
+                $changeType = 'password_changed';
+            }
+
+            $user->notify(new ItemUpdatedNotification(
+                $itemType,
+                $itemName,
+                $changeType,
+                // Updated by:
+                $request->user()->name ?? 'Admin',
+                $user->id
+            ));
+        }
+
+        return response()->json([
             'id' => $user->id,
             'name' => $user->name,
             'email' => $user->email,

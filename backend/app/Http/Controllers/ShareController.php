@@ -230,9 +230,7 @@ class ShareController extends Controller
             }
         }
 
-        // 3) Build a permission map for documents:
-        //    - direct document shares
-        //    - documents in shared folders inherit the folder permission
+        // 3) Build a permission map for documents
         $docPermissionById = [];
         $docSharedVia = []; // 'document' or 'folder'
 
@@ -274,9 +272,9 @@ class ShareController extends Controller
             }
         }
 
-        // 3c) Apply folder permissions to documents in those folders (only non-archived, approved)
+        // 3c) Apply folder permissions to documents in those folders (only non-trashed, approved)
         if (!empty($allSharedFolderIds)) {
-            $docsInSharedFolders = Document::whereNull('archived_at')
+            $docsInSharedFolders = Document::whereNull('trashed_at')
                 ->where('status', 'approved')
                 ->whereIn('folder_id', $allSharedFolderIds)
                 ->get(['id', 'folder_id']);
@@ -296,9 +294,9 @@ class ShareController extends Controller
             }
         }
 
-        // 4) Base query: direct docs OR docs in shared folders (only non-archived, approved)
+        // 4) Base query: direct docs OR docs in shared folders (only non-trashed, approved)
         $docsQuery = Document::with(['folder.department', 'uploadedBy'])
-            ->whereNull('archived_at')
+            ->whereNull('trashed_at')
             ->where('status', 'approved')
 
             ->where(function ($q) use ($directDocIds, $allSharedFolderIds) {
@@ -328,7 +326,7 @@ class ShareController extends Controller
         $documents = $docsQuery->orderBy('created_at', 'desc')->get();
 
         // 5) Map to API shape, using real share permission
-        $mapped = $documents->map(function ($doc) use ($docPermissionById) {
+        $mapped = $documents->map(function ($doc) use ($docPermissionById, $docSharedVia) {
             return [
                 'id'               => $doc->id,
                 'title'            => $doc->title,
@@ -349,6 +347,14 @@ class ShareController extends Controller
                 'sharedvia'        => $docSharedVia[$doc->id] ?? 'document', // default to document
             ];
         });
+
+        // FIX: If requesting root (no folder_id), only return docs that should be shown at root.
+        // This explicitly removes any document that is visible because it is inside a shared folder.
+        if ($folderId === null) {
+            $mapped = $mapped->filter(function ($item) {
+                return $item['sharedvia'] === 'document';
+            })->values();
+        }
 
         return response()->json($mapped);
     }
@@ -403,9 +409,9 @@ class ShareController extends Controller
 
         $allSharedFolderIds = array_keys($folderPermissionById);
 
-        // 3) Query folders (only non-archived)
+        // 3) Query folders (only non-trashed)
         $foldersQuery = Folder::with(['department', 'owner'])
-            ->whereNull('archived_at')
+            ->whereNull('trashed_at')
             ->whereIn('id', $allSharedFolderIds);
 
         // Filter by parent_id for navigation in SharedFilesPage
@@ -470,7 +476,7 @@ class ShareController extends Controller
         }
 
         $docsQuery = Document::with(['folder.department', 'uploadedBy'])
-            ->whereNull('archived_at')
+            ->whereNull('trashed_at')
             ->where(function ($q) use ($directDocIds, $allSharedFolderIds) {
                 if (!empty($directDocIds)) $q->whereIn('id', $directDocIds);
                 if (!empty($allSharedFolderIds)) $q->orWhereIn('folder_id', $allSharedFolderIds);
@@ -557,7 +563,7 @@ class ShareController extends Controller
         $allSharedFolderIds = array_keys($folderPermissionById);
 
         $foldersQuery = Folder::with(['department', 'owner'])
-            ->whereNull('archived_at')
+            ->whereNull('trashed_at')
             ->whereIn('id', $allSharedFolderIds)
             ->where(function ($q) use ($search) {
                 $like = "%{$search}%";
@@ -622,8 +628,12 @@ class ShareController extends Controller
             'permission' => 'required|in:viewer,contributor,editor',
         ]);
 
+        $oldPermission = $share->permission;
+
         $share->permission = $data['permission'];
         $share->save();
+
+        $share->loadMissing(['owner', 'targetUser']);
 
         $item = $share->document_id ? Document::find($share->document_id) : Folder::find($share->folder_id);
         if ($item) {
@@ -632,16 +642,31 @@ class ShareController extends Controller
             ActivityLogger::log(
                 $item,
                 'share_permission_changed',
-                'Share permission for ' . $target . ' set to ' . $share->permission
+                'Share permission for ' . $target . ' changed: ' . $oldPermission . ' → ' . $share->permission
             );
         }
 
+        // Notify target user about permission change
+        if ($share->targetUser && $item) {
+            $itemType = $share->document_id ? 'document' : 'folder';
+            $itemName = $share->document_id
+                ? ($item->title ?: $item->original_filename ?: 'Untitled document')
+                : ($item->name ?: 'Untitled folder');
 
+            $ownerName = $share->owner?->name ?? 'Someone';
 
-        $share->loadMissing(['owner', 'targetUser']);
+            $share->targetUser->notify(new ItemSharedNotification(
+                $itemType,
+                $itemName,
+                $share->permission,
+                $ownerName,
+                $item->id
+            ));
+        }
 
         return response()->json($share);
     }
+
 
     /**
      * DELETE /shares/{share}
@@ -654,19 +679,41 @@ class ShareController extends Controller
             return response()->json(['error' => 'Forbidden'], 403);
         }
 
+        // Load related before delete
+        $share->loadMissing(['owner', 'targetUser']);
+        $item = $share->document_id ? Document::find($share->document_id) : Folder::find($share->folder_id);
+
+        $targetLabel = $share->targetUser?->email ?? ('User #' . $share->target_user_id);
+
         $share->delete();
 
-        $item = $share->document_id ? Document::find($share->document_id) : Folder::find($share->folder_id);
         if ($item) {
-            $target = $share->targetUser?->email ?? ('User #' . $share->target_user_id);
-
             ActivityLogger::log(
                 $item,
                 'unshared',
-                'Access removed for ' . $target
+                'Access removed for ' . $targetLabel
             );
         }
 
+        // Notify target user their access was removed
+        if ($share->targetUser && $item) {
+            $itemType = $share->document_id ? 'document' : 'folder';
+            $itemName = $share->document_id
+                ? ($item->title ?: $item->original_filename ?: 'Untitled document')
+                : ($item->name ?: 'Untitled folder');
+
+            $ownerName = $share->owner?->name ?? 'Someone';
+
+            // Reuse ItemSharedNotification with a special "permission" label or
+            // later create a dedicated ItemUnsharedNotification if you prefer.
+            $share->targetUser->notify(new ItemSharedNotification(
+                $itemType,
+                $itemName,
+                'removed', // indicates access was removed
+                $ownerName,
+                $item->id
+            ));
+        }
 
         return response()->json(['message' => 'Share removed']);
     }

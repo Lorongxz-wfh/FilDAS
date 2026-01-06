@@ -21,3 +21,16 @@ const saved = localStorage.getItem("fildas_token");
 if (saved) {
   setAuthToken(saved);
 }
+
+// Dashboard + activity convenience helpers
+export async function fetchDashboardSummary() {
+  const res = await api.get("/dashboard/summary");
+  return res.data;
+}
+
+export async function fetchRecentActivity(perPage = 10) {
+  const res = await api.get("/activity-logs", {
+    params: { per_page: perPage, page: 1 },
+  });
+  return res.data;
+}

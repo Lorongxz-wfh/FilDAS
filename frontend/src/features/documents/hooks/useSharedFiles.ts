@@ -155,7 +155,7 @@ export function useSharedFiles({ userId, isAdmin }: Params) {
       const foldersData: SharedFolder[] = foldersRaw.map((f) => ({
         id: f.id,
         name: f.name,
-        parent_id: f.parentid ?? null,
+        parent_id: f.parentid ?? null,  
         department_id: f.departmentid ?? null,
         department_name: f.departmentname ?? null,
         owner_id: f.ownerid ?? null,

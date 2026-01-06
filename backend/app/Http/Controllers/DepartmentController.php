@@ -7,6 +7,8 @@ use App\Models\Activity;
 use App\Helpers\ActivityLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use App\Models\User;
+use App\Notifications\ItemUpdatedNotification;
 
 
 class DepartmentController extends Controller
@@ -46,6 +48,9 @@ class DepartmentController extends Controller
             'Department created: ' . $department->name
         );
 
+        // Reload with relations so frontend gets type/owner
+        $department = $department->fresh(['owner', 'type']);
+
         return response()->json(['department' => $department], 201);
     }
 
@@ -53,7 +58,9 @@ class DepartmentController extends Controller
     public function show($id)
     {
         $department = Department::findOrFail($id);
-        return response()->json(['department' => $department]);
+        return response()->json([
+            'department' => $department->fresh(['owner', 'type']),
+        ]);
     }
 
     public function update(Request $request, $id)
@@ -78,14 +85,58 @@ class DepartmentController extends Controller
             $validated['code'] = null;
         }
 
+        $original = $department->getOriginal();
+
         $department->update($validated);
 
-        // AUDIT
+        $changes = [];
+        foreach ($validated as $key => $value) {
+            if (array_key_exists($key, $original) && $original[$key] != $value) {
+                $changes[] = sprintf('%s: "%s" → "%s"', $key, (string) $original[$key], (string) $value);
+            }
+        }
+
+        $details = $changes
+            ? 'Department updated: ' . $department->name . ' (' . implode('; ', $changes) . ')'
+            : 'Department updated: ' . $department->name;
+
         ActivityLogger::log(
             $department,
             'updated',
-            'Department updated: ' . $department->name
+            $details
         );
+
+        // Only notify for important fields
+        $importantKeys = ['name', 'owner_id', 'is_qa'];
+        $changedKeys = array_keys($validated);
+        $hasImportantChange = !empty(array_intersect($changedKeys, $importantKeys));
+
+        if ($hasImportantChange) {
+            $itemType = 'department';
+            $itemName = $department->name;
+
+            // Choose a high-level changeType
+            $changeType = 'updated';
+            if (in_array('is_qa', $changedKeys, true)) {
+                $changeType = 'qa_flag_changed';
+            } elseif (in_array('owner_id', $changedKeys, true)) {
+                $changeType = 'owner_changed';
+            } elseif (in_array('name', $changedKeys, true)) {
+                $changeType = 'renamed';
+            }
+
+            $users = User::where('department_id', $department->id)->get();
+
+            foreach ($users as $user) {
+                $user->notify(new ItemUpdatedNotification(
+                    $itemType,
+                    $itemName,
+                    $changeType,
+                    $request->user()->name ?? 'Admin',
+                    $department->id
+                ));
+            }
+        }
 
         return response()->json(['department' => $department]);
     }

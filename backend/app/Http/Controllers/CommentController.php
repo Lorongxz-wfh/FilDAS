@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Comment;
 use App\Models\Document;
 use Illuminate\Http\Request;
+use App\Helpers\ActivityLogger;
 
 class CommentController extends Controller
 {
@@ -12,7 +13,7 @@ class CommentController extends Controller
     {
         $comments = $document->comments()
             ->with('user:id,name,email')
-            ->orderBy('created_at', 'asc')
+            ->orderBy('created_at', 'desc')
             ->get()
             ->map(function (Comment $c) {
                 return [
@@ -47,6 +48,14 @@ class CommentController extends Controller
         ]);
 
         $comment->load('user:id,name,email');
+
+        // Log comment added on the document
+        ActivityLogger::log(
+            $document,
+            'comment_added',
+            'Comment added by ' . ($comment->user->name ?? 'Unknown'),
+            $user->id
+        );
 
         return response()->json([
             'id'         => $comment->id,

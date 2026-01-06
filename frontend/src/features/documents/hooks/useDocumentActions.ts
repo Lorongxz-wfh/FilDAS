@@ -76,7 +76,7 @@ export function useDocumentActions({
     }
   };
 
-  const handleArchiveSelected = async (
+  const handleTrashSelected = async (
     selectedItem: Item | null,
     onCleared: () => void
   ) => {
@@ -91,7 +91,7 @@ export function useDocumentActions({
 
     if (
       !window.confirm(
-        `Archive ${label}? It will be hidden from normal views but kept in the Archive.`
+        `Trash ${label}? It will be hidden from normal views but kept in the Trash.`
       )
     ) {
       return;
@@ -101,10 +101,10 @@ export function useDocumentActions({
     try {
       if (selectedItem.kind === "file") {
         const doc = selectedItem.data as DocumentRow;
-        await api.post(`/documents/${doc.id}/archive`);
+        await api.post(`/documents/${doc.id}/trash`);
       } else if (selectedItem.kind === "folder") {
         const folder = selectedItem.data as FolderRow;
-        await api.post(`/folders/${folder.id}/archive`);
+        await api.post(`/folders/${folder.id}/trash`);
       } else {
         return;
       }
@@ -116,13 +116,13 @@ export function useDocumentActions({
       }
 
       onCleared();
-      notify("Item archived.", "success");
+      notify("Item trashd.", "success");
     } catch (e: any) {
       console.error(e);
       const msg =
         e?.response?.data?.error ||
         e?.response?.data?.message ||
-        "Failed to archive item.";
+        "Failed to trash item.";
       notify(msg, "error");
     } finally {
       setIsBusy(false);
@@ -198,7 +198,7 @@ export function useDocumentActions({
     setIsBusy,
     handleDownload,
     handleDownloadFolder,
-    handleArchiveSelected,
+    handleTrashSelected,
     moveSelected,
     copySelected,
   };

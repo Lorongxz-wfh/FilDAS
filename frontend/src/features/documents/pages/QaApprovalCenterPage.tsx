@@ -2,7 +2,9 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/Button";
+import { Loader } from "../../../components/ui/Loader";
 import { statusBadgeClass } from "../../../components/documents/DetailsPanelSections";
+import { notify } from "../../../lib/notify";
 
 type Role = { id: number; name: string };
 type Department = { id: number; name: string; is_qa?: boolean };
@@ -24,6 +26,8 @@ type QaDoc = {
   uploadedBy?: { id: number; name: string } | null;
   approved_by?: number | null;
   approved_at?: string | null;
+  assigned_to?: number | null;
+  assignedTo?: { id: number; name: string } | null;
 };
 
 type PagedResponse = {
@@ -56,6 +60,7 @@ export default function QaApprovalCenterPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [commentError, setCommentError] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [rejectReason, setRejectReason] = useState(""); // <-- moved here
 
   // status filter: pending | approved | rejected | all
   const [statusFilter, setStatusFilter] = useState<
@@ -77,6 +82,9 @@ export default function QaApprovalCenterPage() {
     "approve" | "reject" | null
   >(null);
 
+  // const [qaUsers, setQaUsers] = useState<{ id: number; name: string }[]>([]);
+  // const [qaUsersLoading, setQaUsersLoading] = useState(false);
+
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
@@ -90,6 +98,10 @@ export default function QaApprovalCenterPage() {
 
   // permissions: what current user can do in QA
   const canApproveReject = isSuperAdmin || isQaAdmin;
+
+  // assignment abilities
+  const canSelfAssign = !!currentUser && (isSuperAdmin || isQa); // any QA member
+  const canAssignOthers = isSuperAdmin || isQaAdmin;
 
   // can comment in QA modal:
   // - any QA user (staff/admin)
@@ -140,7 +152,16 @@ export default function QaApprovalCenterPage() {
           per_page: 50,
         },
       });
-      setDocs(res.data.data ?? (res.data as any).data ?? []);
+
+      const raw = (res.data as any).data ?? res.data.data ?? [];
+      const mapped: QaDoc[] = raw.map((d: any) => ({
+        ...d,
+        uploadedBy: d.uploadedBy ?? d.uploaded_by ?? null,
+        assignedTo: d.assignedTo ?? d.assigned_to ?? null,
+        assigned_to: d.assigned_to ?? d.assignedTo?.id ?? null,
+      }));
+
+      setDocs(mapped);
     } catch (e: any) {
       console.error(e);
       setError("Failed to load QA approvals.");
@@ -148,6 +169,19 @@ export default function QaApprovalCenterPage() {
       setLoading(false);
     }
   };
+
+  // const loadQaUsers = async () => {
+  //   setQaUsersLoading(true);
+  //   try {
+  //     const res = await api.get<{ id: number; name: string }[]>("/qa/users");
+  //     setQaUsers(res.data);
+  //   } catch (e) {
+  //     console.error(e);
+  //     setQaUsers([]);
+  //   } finally {
+  //     setQaUsersLoading(false);
+  //   }
+  // };
 
   const loadComments = async (docId: number) => {
     setCommentsLoading(true);
@@ -172,7 +206,7 @@ export default function QaApprovalCenterPage() {
       );
 
       // Optionally filter to QA-related actions only
-      const qaActions = ["uploaded", "approved", "rejected"];
+      const qaActions = ["uploaded", "approved", "rejected", "assigned"];
       const filtered = res.data.filter((entry) =>
         qaActions.includes(entry.action)
       );
@@ -245,6 +279,7 @@ export default function QaApprovalCenterPage() {
       await api.post(`/documents/${selectedDoc.id}/approve`);
       await loadDocs();
       setSelectedDoc((prev) => (prev ? { ...prev, status: "approved" } : prev));
+      notify("Document approved.", "success");
     } catch (e: any) {
       console.error(e);
       const msg =
@@ -252,6 +287,7 @@ export default function QaApprovalCenterPage() {
         e?.response?.data?.message ||
         "Failed to approve document.";
       setActionError(msg);
+      notify(msg, "error");
     } finally {
       setActionLoading(null);
     }
@@ -259,17 +295,20 @@ export default function QaApprovalCenterPage() {
 
   const handleReject = async () => {
     if (!selectedDoc || actionLoading) return;
-    const reason =
-      window.prompt("Reason for rejection (optional):") ?? undefined;
+
     setActionLoading("reject");
     setActionError(null);
+
     try {
-      await api.post(
-        `/documents/${selectedDoc.id}/reject`,
-        reason ? { reason } : {}
-      );
+      const payload = rejectReason.trim()
+        ? { reason: rejectReason.trim() }
+        : {};
+
+      await api.post(`/documents/${selectedDoc.id}/reject`, payload);
       await loadDocs();
       setSelectedDoc((prev) => (prev ? { ...prev, status: "rejected" } : prev));
+      setRejectReason("");
+      notify("Document rejected.", "success");
     } catch (e: any) {
       console.error(e);
       const msg =
@@ -277,16 +316,90 @@ export default function QaApprovalCenterPage() {
         e?.response?.data?.message ||
         "Failed to reject document.";
       setActionError(msg);
+      notify(msg, "error");
     } finally {
       setActionLoading(null);
     }
   };
 
+  const handleSelfAssign = async () => {
+    if (!selectedDoc || !canSelfAssign) return;
+    try {
+      const res = await api.post(`/documents/${selectedDoc.id}/self-assign`);
+      const updated = res.data as any;
+      setSelectedDoc((prev) =>
+        prev && prev.id === updated.id
+          ? {
+              ...prev,
+              assigned_to: updated.assigned_to,
+              assignedTo:
+                updated.assignedTo ?? updated.assigned_to
+                  ? {
+                      id: updated.assigned_to,
+                      name:
+                        updated.assignedTo?.name ?? currentUser?.name ?? "You",
+                    }
+                  : null,
+            }
+          : prev
+      );
+      await loadDocs();
+      notify("Assigned to you.", "success");
+    } catch (e: any) {
+      console.error(e);
+      const msg =
+        e?.response?.data?.error ||
+        e?.response?.data?.message ||
+        "Failed to assign to you.";
+      notify(msg, "error");
+    }
+  };
+
+  const handleAssignTo = async (userId: number) => {
+    if (!selectedDoc || !canAssignOthers) return;
+    try {
+      const res = await api.post(`/documents/${selectedDoc.id}/assign`, {
+        user_id: userId,
+      });
+      const updated = res.data as any;
+      setSelectedDoc((prev) =>
+        prev && prev.id === updated.id
+          ? {
+              ...prev,
+              assigned_to: updated.assigned_to,
+              assignedTo: updated.assignedTo ?? null,
+            }
+          : prev
+      );
+      await loadDocs();
+      notify("Document assigned.", "success");
+    } catch (e: any) {
+      console.error(e);
+      const msg =
+        e?.response?.data?.error ||
+        e?.response?.data?.message ||
+        "Failed to assign document.";
+      notify(msg, "error");
+    }
+  };
+
   return (
-    <div>
-      <h1 className="mb-2 text-2xl font-semibold text-white">
-        QA Approval Center
-      </h1>
+    <div className="flex min-h-[calc(88vh-2rem)] flex-col">
+      <div className="mb-2 flex items-center justify-between">
+        <h1 className="text-2xl font-semibold text-white">
+          QA Approval Center
+        </h1>
+        <div className="flex items-center gap-2">
+          <Button
+            size="xs"
+            variant="secondary"
+            onClick={loadDocs}
+            disabled={loading}
+          >
+            {loading ? "Reloading..." : "Reload"}
+          </Button>
+        </div>
+      </div>
 
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
         {error && <p className="text-xs text-red-400">{error}</p>}
@@ -310,113 +423,130 @@ export default function QaApprovalCenterPage() {
         </div>
       </div>
 
-      {loading ? (
-        <div className="flex h-40 items-center justify-center">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
+      {/* THIS WRAPS THE CARD AND FORCES FULL HEIGHT */}
+      <div className="flex-1 flex">
+        <div className="flex flex-1 flex-col rounded-lg border border-slate-800 bg-slate-900/60 text-xs">
+          {loading ? (
+            <div className="flex flex-1 items-center justify-center">
+              <Loader label="Loading QA documents..." size="md" />
+            </div>
+          ) : docs.length === 0 ? (
+            <div className="flex flex-1 items-center justify-center p-6">
+              <p className="text-xs text-slate-400">
+                No documents match the current filters.
+              </p>
+            </div>
+          ) : (
+            <div className="h-full overflow-x-auto p-3">
+              <table className="min-w-full text-left">
+                <thead className="border-b border-slate-800 text-[11px] uppercase text-slate-400">
+                  <tr>
+                    <th className="py-2 pr-3">Title / file</th>
+                    <th className="py-2 pr-3">Department</th>
+                    <th className="py-2 pr-3">Uploaded by</th>
+                    <th className="py-2 pr-3">Assigned QA</th>
+                    <th className="py-2 pr-3">Status</th>
+                    <th className="py-2 pr-3">Approved by</th>
+                    <th className="py-2 pr-3">Approved at</th>
+                    <th className="py-2 pr-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800">
+                  {docs.map((d) => (
+                    <tr
+                      key={d.id}
+                      className="cursor-pointer hover:bg-slate-800/50"
+                      onClick={() => {
+                        setSelectedDoc(d);
+                        setActionError(null);
+                        setCommentError(null);
+                        loadComments(d.id);
+                        loadPreview(d.id);
+                        loadQaHistory(d.id);
+                      }}
+                    >
+                      <td className="py-2 pr-3 text-slate-100">
+                        {d.title || d.original_filename}
+                      </td>
+                      <td className="py-2 pr-3 text-slate-300">
+                        {d.department?.name ?? "—"}
+                      </td>
+                      <td className="py-2 pr-3 text-slate-300">
+                        {d.uploadedBy?.name ?? "—"}
+                      </td>
+                      <td className="py-2 pr-3 text-slate-300">
+                        {d.assignedTo?.name ??
+                          (d.assigned_to
+                            ? `User #${d.assigned_to}`
+                            : "Unassigned")}
+                      </td>
+                      <td className="py-2 pr-3 text-xs">
+                        <span className={statusBadgeClass(d.status)}>
+                          {d.status || "pending"}
+                        </span>
+                      </td>
+                      <td className="py-2 pr-3 text-slate-300">
+                        {(d as any).approvedBy?.name ??
+                          (d.approved_by ? `User #${d.approved_by}` : "—")}
+                      </td>
+                      <td className="py-2 pr-3 text-slate-400">
+                        {d.approved_at
+                          ? new Date(d.approved_at).toLocaleString()
+                          : "—"}
+                      </td>
+                      <td className="py-2 pr-3 text-right">
+                        {canApproveReject ? (
+                          <>
+                            <Button
+                              size="xs"
+                              variant="primary"
+                              className="mr-2"
+                              disabled={actionLoading !== null}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedDoc(d);
+                                loadComments(d.id);
+                                loadPreview(d.id);
+                                loadQaHistory(d.id);
+                                handleApprove();
+                              }}
+                            >
+                              {actionLoading === "approve"
+                                ? "Approving..."
+                                : "Approve"}
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="secondary"
+                              disabled={actionLoading !== null}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedDoc(d);
+                                loadComments(d.id);
+                                loadPreview(d.id);
+                                loadQaHistory(d.id);
+                                handleReject();
+                              }}
+                            >
+                              {actionLoading === "reject"
+                                ? "Rejecting..."
+                                : "Reject"}
+                            </Button>
+                          </>
+                        ) : (
+                          <span className="text-[11px] text-slate-500">
+                            View only
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
-      ) : docs.length === 0 ? (
-        <p className="text-xs text-slate-400">No documents pending approval.</p>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-xs">
-          <table className="min-w-full text-left">
-            <thead className="border-b border-slate-800 text-[11px] uppercase text-slate-400">
-              <tr>
-                <th className="py-2 pr-3">Title / file</th>
-                <th className="py-2 pr-3">Department</th>
-                <th className="py-2 pr-3">Uploaded by</th>
-                <th className="py-2 pr-3">Status</th>
-                <th className="py-2 pr-3">Approved by</th>
-                <th className="py-2 pr-3">Approved at</th>
-                <th className="py-2 pr-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800">
-              {docs.map((d) => (
-                <tr
-                  key={d.id}
-                  className="cursor-pointer hover:bg-slate-800/50"
-                  onClick={() => {
-                    setSelectedDoc(d);
-                    setActionError(null);
-                    setCommentError(null);
-                    loadComments(d.id);
-                    loadPreview(d.id);
-                    loadQaHistory(d.id);
-                  }}
-                >
-                  <td className="py-2 pr-3 text-slate-100">
-                    {d.title || d.original_filename}
-                  </td>
-                  <td className="py-2 pr-3 text-slate-300">
-                    {d.department?.name ?? "—"}
-                  </td>
-                  <td className="py-2 pr-3 text-slate-300">
-                    {d.uploadedBy?.name ?? "—"}
-                  </td>
-                  <td className="py-2 pr-3 text-xs">
-                    <span className={statusBadgeClass(d.status)}>
-                      {d.status || "pending"}
-                    </span>
-                  </td>
-                  <td className="py-2 pr-3 text-slate-300">
-                    {d.approved_by ? `User #${d.approved_by}` : "—"}
-                  </td>
-                  <td className="py-2 pr-3 text-slate-400">
-                    {d.approved_at
-                      ? new Date(d.approved_at).toLocaleString()
-                      : "—"}
-                  </td>
-                  <td className="py-2 pr-3 text-right">
-                    {canApproveReject ? (
-                      <>
-                        <Button
-                          size="xs"
-                          variant="primary"
-                          className="mr-2"
-                          disabled={actionLoading !== null}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedDoc(d);
-                            loadComments(d.id);
-                            loadPreview(d.id);
-                            loadQaHistory(d.id);
-                            handleApprove();
-                          }}
-                        >
-                          {actionLoading === "approve"
-                            ? "Approving..."
-                            : "Approve"}
-                        </Button>
-                        <Button
-                          size="xs"
-                          variant="secondary"
-                          disabled={actionLoading !== null}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedDoc(d);
-                            loadComments(d.id);
-                            loadPreview(d.id);
-                            loadQaHistory(d.id);
-                            handleReject();
-                          }}
-                        >
-                          {actionLoading === "reject"
-                            ? "Rejecting..."
-                            : "Reject"}
-                        </Button>
-                      </>
-                    ) : (
-                      <span className="text-[11px] text-slate-500">
-                        View only
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      </div>
 
       {/* QA review modal */}
       {selectedDoc && (
@@ -476,7 +606,7 @@ export default function QaApprovalCenterPage() {
                   <div className="flex h-full items-center justify-center rounded-md border border-slate-700 bg-slate-950/40 p-2">
                     {previewLoading ? (
                       <div className="flex h-full w-full items-center justify-center">
-                        <div className="h-6 w-6 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
+                        <Loader label="Loading preview..." size="md" />
                       </div>
                     ) : previewUrl ? (
                       <iframe
@@ -497,12 +627,56 @@ export default function QaApprovalCenterPage() {
               <div className="flex w-full max-w-md flex-col p-3">
                 {/* Status + actions */}
                 <div className="mb-3 flex items-center justify-between">
-                  <span className="inline-flex items-center gap-1 text-[11px] text-slate-200">
-                    <span className="text-slate-400">Status:</span>
-                    <span className={statusBadgeClass(selectedDoc.status)}>
-                      {selectedDoc.status || "pending"}
+                  <div className="flex flex-col gap-1">
+                    <span className="inline-flex items-center gap-2 text-[11px] text-slate-300">
+                      <span className="text-slate-400">Assigned QA:</span>
+                      <span>
+                        {selectedDoc.assignedTo?.name ??
+                          (selectedDoc.assigned_to
+                            ? `User #${selectedDoc.assigned_to}`
+                            : "Unassigned")}
+                      </span>
+
+                      {canSelfAssign &&
+                        selectedDoc.status === "pending" &&
+                        (!selectedDoc.assigned_to ||
+                          selectedDoc.assigned_to === currentUser?.id) && (
+                          <button
+                            type="button"
+                            className="text-[10px] text-sky-400 hover:underline"
+                            onClick={handleSelfAssign}
+                          >
+                            Assign to me
+                          </button>
+                        )}
+
+                      {/* {canAssignOthers && selectedDoc.status === "pending" && (
+                        <select
+                          className="rounded border border-slate-700 bg-slate-900 px-1 py-[2px] text-[10px] text-slate-200 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                          value={selectedDoc.assigned_to ?? ""}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            if (!value) return;
+                            const userId = Number(value);
+                            if (!Number.isNaN(userId)) {
+                              handleAssignTo(userId);
+                            }
+                          }}
+                        >
+                          <option value="">
+                            {qaUsersLoading
+                              ? "Loading QA users..."
+                              : "Assign to QA"}
+                          </option>
+                          {qaUsers.map((u) => (
+                            <option key={u.id} value={u.id}>
+                              {u.name}
+                            </option>
+                          ))}
+                        </select>
+                      )} */}
                     </span>
-                  </span>
+                  </div>
 
                   {canApproveReject ? (
                     <div className="flex gap-2">
@@ -533,6 +707,19 @@ export default function QaApprovalCenterPage() {
                     {actionError}
                   </div>
                 )}
+                {/* Reject reason input */}
+                <div className="mb-3 space-y-1">
+                  <label className="text-[11px] text-slate-400">
+                    Reject reason (optional)
+                  </label>
+                  <textarea
+                    className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-white focus:outline-none focus:ring-1 focus:ring-rose-500"
+                    rows={2}
+                    placeholder="Explain why this document is rejected (optional)..."
+                    value={rejectReason}
+                    onChange={(e) => setRejectReason(e.target.value)}
+                  />
+                </div>
 
                 {/* Metadata */}
                 <div className="mb-3 space-y-1 text-[11px] text-slate-300">
@@ -557,8 +744,8 @@ export default function QaApprovalCenterPage() {
                   </div>
                   <div className="max-h-32 overflow-y-auto rounded-md border border-slate-800 bg-slate-950/40 p-2">
                     {qaHistoryLoading ? (
-                      <div className="py-2 text-center text-[11px] text-slate-500">
-                        Loading QA history...
+                      <div className="py-2 text-center">
+                        <Loader label="Loading QA history..." size="sm" />
                       </div>
                     ) : qaHistory.length === 0 ? (
                       <div className="py-2 text-center text-[11px] text-slate-500">
@@ -578,6 +765,7 @@ export default function QaApprovalCenterPage() {
                             {entry.action === "approved" && "Approved"}
                             {entry.action === "rejected" && "Rejected"}
                             {entry.action === "uploaded" && "Uploaded"}
+                            {entry.action === "assigned" && "Assigned"}
                             {entry.action !== "approved" &&
                               entry.action !== "rejected" &&
                               entry.action !== "uploaded" &&
@@ -603,8 +791,8 @@ export default function QaApprovalCenterPage() {
 
                   <div className="flex-1 overflow-y-auto rounded-md border border-slate-800 bg-slate-950/40 p-2">
                     {commentsLoading ? (
-                      <div className="py-4 text-center text-[11px] text-slate-500">
-                        Loading comments...
+                      <div className="py-4 text-center">
+                        <Loader label="Loading comments..." size="sm" />
                       </div>
                     ) : comments.length === 0 ? (
                       <div className="py-4 text-center text-[11px] text-slate-500">

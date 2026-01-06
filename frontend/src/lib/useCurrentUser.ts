@@ -7,6 +7,7 @@ export type CurrentUser = {
   email: string;
   department_id: number | null;
   role?: { id: number; name: string } | null;
+  department?: { id: number; name: string; is_qa?: boolean } | null;
 };
 
 export function useCurrentUser() {

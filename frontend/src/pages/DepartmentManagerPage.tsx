@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
+import { Loader } from "../components/ui/Loader";
 import Modal from "../components/Modal";
 import { notify } from "../lib/notify";
 
@@ -13,7 +14,6 @@ const getDepartmentLogoUrl = (dept: Department) =>
   dept.logo_path
     ? `${FILE_BASE_URL}/storage/fildas_assets/${dept.logo_path}`
     : null;
-
 
 type Department = {
   id: number;
@@ -275,34 +275,38 @@ export default function DepartmentManagerPage() {
 
   // ---------- UI ----------
   return (
-    <div>
-      <h1 className="mb-2 text-2xl font-semibold text-white">
-        Department manager
-      </h1>
+    <div className="flex h-full flex-col gap-3">
+      {/* Header */}
+      <header>
+        <h1 className="mb-1 text-2xl font-semibold text-white">
+          Department manager
+        </h1>
+      </header>
 
-      <div className="mb-3 flex items-center justify-between text-sm">
-        <div className="inline-flex rounded-md border border-slate-700 bg-slate-900">
+      {/* Toolbar */}
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+        <div className="inline-flex rounded-md border border-slate-700 bg-slate-900/80">
           <button
             type="button"
-            className={`px-2 py-1 text-[11px] ${
+            className={`px-3 py-1 text-[11px] ${
               viewMode === "table"
                 ? "bg-slate-800 text-sky-300"
                 : "text-slate-400"
             }`}
             onClick={() => setViewMode("table")}
           >
-            List
+            List view
           </button>
           <button
             type="button"
-            className={`px-2 py-1 text-[11px] ${
+            className={`px-3 py-1 text-[11px] ${
               viewMode === "grid"
                 ? "bg-slate-800 text-sky-300"
                 : "text-slate-400"
             }`}
             onClick={() => setViewMode("grid")}
           >
-            Grid
+            Card view
           </button>
         </div>
 
@@ -311,12 +315,25 @@ export default function DepartmentManagerPage() {
         </Button>
       </div>
 
-      <section className="rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-sm">
+      <section className="h-[calc(100vh-190px)] overflow-hidden rounded-lg border border-slate-800 bg-slate-900/60 p-3 text-sm">
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-xs font-semibold uppercase text-slate-400">
+            Departments
+          </p>
+          <p className="text-xs text-slate-500">
+            {loading
+              ? "Loading…"
+              : departments.length === 0
+              ? "No departments"
+              : `${departments.length} department(s)`}
+          </p>
+        </div>
+
         {error && <p className="mb-2 text-xs text-red-400">{error}</p>}
 
         {loading ? (
           <div className="flex h-40 items-center justify-center">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
+            <Loader label="Loading departments..." size="md" />
           </div>
         ) : departments.length === 0 ? (
           <p className="text-xs text-slate-500">No departments defined.</p>
@@ -325,15 +342,13 @@ export default function DepartmentManagerPage() {
             <table className="min-w-full text-left text-xs">
               <thead className="border-b border-slate-800 text-[11px] uppercase text-slate-400">
                 <tr>
-                  <th className="py-2 pr-3">Name</th>
-                  <th className="py-2 pr-3">Code</th>
-                  <th className="py-2 pr-3">Description</th>
-                  <th className="py-2 pr-3">Owner</th>
-                  <th className="py-2 pr-3">Type</th>
-                  <th className="py-2 pr-3">Status</th>
-                  <th className="py-2 pr-3">Created</th>
-                  <th className="py-2 pr-3">Updated</th>
-                  <th className="py-2 pr-3 text-right">Actions</th>
+                  <th className="py-2 pr-3 w-[260px]">Name</th>
+                  <th className="py-2 pr-3 w-20">Code</th>
+                  <th className="py-2 pr-3 w-32">Type</th>
+                  <th className="py-2 pr-3 w-24">Status</th>
+                  <th className="py-2 pr-3 w-24">Created</th>
+                  <th className="py-2 pr-3 w-24">Updated</th>
+                  <th className="py-2 pr-3 text-right w-44">Actions</th>
                 </tr>
               </thead>
 
@@ -346,28 +361,26 @@ export default function DepartmentManagerPage() {
                           <img
                             src={getDepartmentLogoUrl(dept)!}
                             alt={dept.name}
-                            className="h-6 w-6 rounded-full object-cover border border-slate-700"
+                            className="h-8 w-8 rounded-full object-cover border border-slate-700 shrink-0"
                           />
                         ) : (
-                          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-800 text-[10px] uppercase text-slate-300">
+                          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-800 text-[10px] uppercase text-slate-300 shrink-0">
                             {dept.name.charAt(0)}
                           </div>
                         )}
-                        <span>{dept.name}</span>
+                        <span className="truncate" title={dept.name}>
+                          {dept.name}
+                        </span>
                       </div>
                     </td>
-                    <td className="py-2 pr-3 text-slate-300">
+
+                    <td className="py-2 pr-3 w-20 text-slate-300">
                       {dept.code || "—"}
                     </td>
-                    <td className="py-2 pr-3 text-slate-300">
-                      {dept.description || "—"}
-                    </td>
-                    <td className="py-2 pr-3 text-slate-300">
-                      {dept.owner?.name || "—"}
-                    </td>
-                    <td className="py-2 pr-3 text-slate-300">
+                    <td className="py-2 pr-3 w-32 text-slate-300 truncate">
                       {dept.type?.name || "—"}
                     </td>
+
                     <td className="py-2 pr-3">
                       <span
                         className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${
@@ -405,17 +418,9 @@ export default function DepartmentManagerPage() {
                       <Button
                         size="xs"
                         variant="secondary"
-                        className="mr-2"
                         onClick={() => openEdit(dept)}
                       >
                         Edit
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        onClick={() => handleDelete(dept)}
-                      >
-                        Delete
                       </Button>
                     </td>
                   </tr>
@@ -640,23 +645,43 @@ export default function DepartmentManagerPage() {
           </div>
 
           {/* Actions */}
-          <div className="flex justify-end gap-2 pt-2">
-            <Button
-              type="button"
-              size="xs"
-              variant="secondary"
-              onClick={() => {
-                setCreateOpen(false);
-                setEditOpen(false);
-                resetForm();
-              }}
-              disabled={saving}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" size="xs" disabled={saving}>
-              {saving ? "Saving..." : "Save"}
-            </Button>
+          <div className="flex items-center justify-between gap-2 pt-2">
+            {/* Left: delete (edit mode only) */}
+            {activeDept && (
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost"
+                className="text-rose-400 hover:text-rose-300"
+                onClick={() => {
+                  if (!activeDept) return;
+                  handleDelete(activeDept);
+                }}
+                disabled={saving}
+              >
+                Delete department
+              </Button>
+            )}
+
+            {/* Right: cancel / save */}
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                size="xs"
+                variant="secondary"
+                onClick={() => {
+                  setCreateOpen(false);
+                  setEditOpen(false);
+                  resetForm();
+                }}
+                disabled={saving}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" size="xs" disabled={saving}>
+                {saving ? "Saving..." : "Save"}
+              </Button>
+            </div>
           </div>
         </form>
       </Modal>

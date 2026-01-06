@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { Button } from "../components/ui/Button";
+import Modal from "../components/Modal";
 import type { Department } from "../types/documents";
 
 type AuditLogRow = {
@@ -80,6 +81,8 @@ export default function ActivityLogsPage() {
   const [logs, setLogs] = useState<AuditLogRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedLog, setSelectedLog] = useState<AuditLogRow | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   // filters
   const [userId, setUserId] = useState("");
@@ -417,7 +420,14 @@ export default function ActivityLogsPage() {
 
               {!loading &&
                 logs.map((log) => (
-                  <tr key={log.id} className="hover:bg-slate-800/60">
+                  <tr
+                    key={log.id}
+                    className="cursor-pointer hover:bg-slate-800/60"
+                    onClick={() => {
+                      setSelectedLog(log);
+                      setDetailsOpen(true);
+                    }}
+                  >
                     <td className="py-1.5 pr-3 text-slate-200">
                       {log.user_name ?? `User #${log.user_id ?? "-"}`}
                     </td>
@@ -431,7 +441,6 @@ export default function ActivityLogsPage() {
                       {formatSubject(log.subject_type, log.subject_id)}
                     </td>
                     <td className="py-1.5 pr-3 text-slate-300">
-                      {/* Type = human-friendly version of subject_type */}
                       {formatSubject(log.subject_type, null)}
                     </td>
                     <td className="py-1.5 pr-3 text-sky-300">{log.action}</td>
@@ -472,6 +481,110 @@ export default function ActivityLogsPage() {
           </div>
         </div>
       </section>
+
+      {/* Activity details modal */}
+      <Modal
+        open={detailsOpen && !!selectedLog}
+        title="Activity details"
+        onClose={() => {
+          setDetailsOpen(false);
+          setSelectedLog(null);
+        }}
+      >
+        {selectedLog && (
+          <div className="space-y-4 text-xs text-slate-200">
+            {/* Top summary strip */}
+            <div className="rounded-md border border-slate-700 bg-slate-900/70 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                    User
+                  </p>
+                  <p className="text-sm font-medium">
+                    {selectedLog.user_name ??
+                      (selectedLog.user_id
+                        ? `User #${selectedLog.user_id}`
+                        : "—")}
+                  </p>
+                </div>
+                <div className="hidden h-8 w-px bg-slate-800 sm:block" />
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                    Action
+                  </p>
+                  <p className="text-sm font-semibold text-sky-300">
+                    {selectedLog.action}
+                  </p>
+                </div>
+                <div className="hidden h-8 w-px bg-slate-800 sm:block" />
+                <div className="text-right">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                    Date
+                  </p>
+                  <p className="text-[11px] text-slate-200">
+                    {new Date(selectedLog.created_at).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Meta grid */}
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-1">
+                <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                  Department
+                </p>
+                <p className="text-slate-100">
+                  {selectedLog.department_name ??
+                    (selectedLog.department_id
+                      ? `Dept #${selectedLog.department_id}`
+                      : "—")}
+                </p>
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                  Subject
+                </p>
+                <p className="text-slate-100">
+                  {formatSubject(
+                    selectedLog.subject_type,
+                    selectedLog.subject_id
+                  )}
+                </p>
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                  Subject type
+                </p>
+                <p className="text-slate-100">
+                  {formatSubject(selectedLog.subject_type, null)}
+                </p>
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                  Raw type key
+                </p>
+                <p className="truncate text-[11px] text-slate-400">
+                  {selectedLog.subject_type ?? "—"}
+                </p>
+              </div>
+            </div>
+
+            {/* Details block */}
+            <div className="space-y-1">
+              <p className="text-[11px] uppercase tracking-wide text-slate-400">
+                Details
+              </p>
+              <pre className="max-h-56 overflow-auto rounded-md border border-slate-800 bg-slate-950/70 p-3 text-[11px] leading-relaxed text-slate-100 whitespace-pre-wrap">
+                {selectedLog.details ?? "—"}
+              </pre>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

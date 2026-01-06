@@ -10,7 +10,7 @@ type Props = {
   onRenameSelected: () => void;
   onCopySelected: () => void;
   onMoveSelected: () => void;
-  onArchiveSelected: () => void;
+  onTrashSelected: () => void;
 };
 
 export function SelectionActionsToolbar({
@@ -21,7 +21,7 @@ export function SelectionActionsToolbar({
   onRenameSelected,
   onCopySelected,
   onMoveSelected,
-  onArchiveSelected,
+  onTrashSelected,
 }: Props) {
   return (
     <div className="mb-2.5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -46,8 +46,8 @@ export function SelectionActionsToolbar({
               Move
             </Button>
 
-            <Button size="xs" onClick={onArchiveSelected}>
-              Archive
+            <Button size="xs" onClick={onTrashSelected}>
+              Trash
             </Button>
           </>
         )}

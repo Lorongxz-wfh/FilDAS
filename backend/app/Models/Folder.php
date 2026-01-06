@@ -51,19 +51,19 @@ class Folder extends Model
         return $this->morphMany(Activity::class, 'subject');
     }
 
-    // Only non-archived folders
-    public function scopeNotArchived($query)
+    // Only non-trashed folders
+    public function scopeNotTrashed($query)
     {
-        return $query->whereNull('archived_at');
+        return $query->whereNull('trashed_at');
     }
 
-    // Only archived folders
-    public function scopeArchived($query)
+    // Only trashed folders
+    public function scopeTrashed($query)
     {
-        return $query->whereNotNull('archived_at');
+        return $query->whereNotNull('trashed_at');
     }
 
     protected $casts = [
-        'archived_at' => 'datetime',
+        'trashed_at' => 'datetime',
     ];
 }

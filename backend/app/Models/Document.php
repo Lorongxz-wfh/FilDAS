@@ -29,13 +29,14 @@ class Document extends Model
         'uploaded_at',
         'status',
         'approved_by',
+        'assigned_to',
         'approved_at',
     ];
 
     protected $casts = [
         'uploaded_at' => 'datetime',
         'size_bytes'  => 'integer',
-        'archived_at' => 'datetime',
+        'trashed_at'  => 'datetime',
         'approved_at' => 'datetime',
     ];
 
@@ -50,6 +51,19 @@ class Document extends Model
     {
         return $this->belongsTo(User::class, 'uploaded_by');
     }
+
+    // QA reviewer who made the decision
+    public function approvedBy()
+    {
+        return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    // QA user currently responsible for reviewing this document
+    public function assignedTo()
+    {
+        return $this->belongsTo(User::class, 'assigned_to');
+    }
+
 
     public function folder()
     {
@@ -86,16 +100,14 @@ class Document extends Model
         return $this->morphMany(Comment::class, 'commentable')->latest();
     }
 
-    // Only non-archived documents
-    public function scopeNotArchived($query)
+    public function scopeTrashed($query)
     {
-        return $query->whereNull('archived_at');
+        return $query->whereNotNull('trashed_at');
     }
 
-    // Only archived documents
-    public function scopeArchived($query)
+    public function scopeNotTrashed($query)
     {
-        return $query->whereNotNull('archived_at');
+        return $query->whereNull('trashed_at');
     }
 
     // in App\Models\Document

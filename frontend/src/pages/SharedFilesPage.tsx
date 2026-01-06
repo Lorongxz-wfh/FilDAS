@@ -270,13 +270,13 @@ export default function SharedFilesPage() {
     }
   };
 
-  // Archive selected shared item if allowed (editor/owner on original)
-  const handleSharedArchiveSelected = async () => {
+  // Trash selected shared item if allowed (editor/owner on original)
+  const handleSharedTrashSelected = async () => {
     if (!selectedItem) return;
 
     if (!canDeleteSelected) {
       notify(
-        "You do not have permission to archive this shared item.",
+        "You do not have permission to trash this shared item.",
         "error"
       );
       return;
@@ -289,7 +289,7 @@ export default function SharedFilesPage() {
 
     if (
       !window.confirm(
-        `Archive ${label}? It will be hidden from normal views but kept in the Archive.`
+        `Trash ${label}? It will be hidden from normal views but kept in the Trash.`
       )
     ) {
       return;
@@ -299,10 +299,10 @@ export default function SharedFilesPage() {
     try {
       if (selectedItem.kind === "file") {
         const doc = selectedItem.data as DocumentRow;
-        await api.post(`/documents/${doc.id}/archive`);
+        await api.post(`/documents/${doc.id}/trash`);
       } else if (selectedItem.kind === "folder") {
         const folder = selectedItem.data as SharedFolder;
-        await api.post(`/folders/${folder.id}/archive`);
+        await api.post(`/folders/${folder.id}/trash`);
       } else {
         return;
       }
@@ -315,13 +315,13 @@ export default function SharedFilesPage() {
 
       setSelectedItem(null);
       setDetailsOpen(false);
-      notify("Item archived.", "success");
+      notify("Item trashd.", "success");
     } catch (e: any) {
       console.error(e);
       const msg =
         e?.response?.data?.error ||
         e?.response?.data?.message ||
-        "Failed to archive item.";
+        "Failed to trash item.";
       notify(msg, "error");
     } finally {
       setIsBusy(false);
@@ -571,8 +571,8 @@ export default function SharedFilesPage() {
 
                     {canDeleteSelected && (
                       <>
-                        <Button size="xs" onClick={handleSharedArchiveSelected}>
-                          Archive
+                        <Button size="xs" onClick={handleSharedTrashSelected}>
+                          Trash
                         </Button>
                         <Button
                           size="xs"
@@ -866,10 +866,10 @@ export default function SharedFilesPage() {
                                               kind: "folder",
                                               data: folder as any,
                                             });
-                                            handleSharedArchiveSelected();
+                                            handleSharedTrashSelected();
                                           }}
                                         >
-                                          Archive
+                                          Trash
                                         </DropdownMenu.Item>
                                       </>
                                     );
@@ -1084,10 +1084,10 @@ export default function SharedFilesPage() {
                                             kind: "file",
                                             data: doc as any,
                                           });
-                                          handleSharedArchiveSelected();
+                                          handleSharedTrashSelected();
                                         }}
                                       >
-                                        Archive
+                                        Trash
                                       </DropdownMenu.Item>
                                     </>
                                   );
