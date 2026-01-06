@@ -29,6 +29,7 @@ export type FileDetailsProps = {
 export type FolderDetailsProps = {
   folder: FolderRow;
   onDescriptionSaved?: () => void | Promise<void>;
+  onFolderUpdated?: (folder: FolderRow) => void;
 };
 
 export function prettyType(mime: string): string {
@@ -111,7 +112,11 @@ export function FileDetails({
     setDescription(doc.description || "");
     setEditingDescription(false);
 
-    setSchoolYear((doc as any).school_year || null);
+    const currentYear = new Date().getFullYear();
+    const defaultSy = `${currentYear}-${currentYear + 1}`;
+
+    setSchoolYear((doc as any).school_year || defaultSy);
+
     setTags(
       Array.isArray((doc as any).tags)
         ? (doc as any).tags.map((t: any) => t.name)
@@ -684,6 +689,7 @@ export function FileDetails({
 export function FolderDetails({
   folder,
   onDescriptionSaved,
+  onFolderUpdated,
 }: FolderDetailsProps) {
   const [editingDescription, setEditingDescription] = useState(false);
   const [description, setDescription] = useState(
@@ -699,8 +705,16 @@ export function FolderDetails({
   const handleSaveDescription = async () => {
     setSavingDescription(true);
     try {
-      await api.patch(`/folders/${folder.id}`, { description });
+      const res = await api.patch(`/folders/${folder.id}`, { description });
+      const updated = (res.data.folder ?? res.data) as FolderRow;
+
       setEditingDescription(false);
+      setDescription(updated.description || "");
+
+      if (onFolderUpdated) {
+        onFolderUpdated(updated);
+      }
+
       if (onDescriptionSaved) await onDescriptionSaved();
     } catch (e) {
       console.error(e);

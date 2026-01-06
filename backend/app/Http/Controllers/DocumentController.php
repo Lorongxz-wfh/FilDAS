@@ -31,14 +31,23 @@ class DocumentController extends Controller
             $query->where('folder_id', $request->folder_id);
         }
 
-        if ($request->has('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('title', 'like', "%{$search}%")
+        if ($request->has('school_year') && $request->school_year !== null && $request->school_year !== '') {
+            $query->where('school_year', $request->school_year);
+        }
+
+        if ($request->has('q')) {
+            $search = $request->q;
+            $query->where(function ($q2) use ($search) {
+                $q2->where('title', 'like', "%{$search}%")
                     ->orWhere('description', 'like', "%{$search}%")
-                    ->orWhere('original_filename', 'like', "%{$search}%");
+                    ->orWhere('original_filename', 'like', "%{$search}%")
+                    ->orWhereHas('tags', function ($sub) use ($search) {
+                        $sub->where('name', 'like', "%{$search}%");
+                    });
             });
         }
+
+
 
         return $query;
     }

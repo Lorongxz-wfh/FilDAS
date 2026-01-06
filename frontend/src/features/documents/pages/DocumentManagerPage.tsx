@@ -71,6 +71,10 @@ export default function DocumentManagerPage() {
 
   const initialDepartmentId = location.state?.departmentId ?? null;
 
+  const [viewMode, setViewMode] = useState<ViewMode>("grid");
+  const [sortMode, setSortMode] = useState<SortMode>("alpha");
+  const [schoolYearFilter, setSchoolYearFilter] = useState<string>(""); // "" = all years
+
   const {
     departments,
     folders,
@@ -96,10 +100,8 @@ export default function DocumentManagerPage() {
     isSuperAdmin,
     userDepartmentId: user.department_id,
     initialDepartmentId,
+    schoolYearFilter,
   });
-
-  const [viewMode, setViewMode] = useState<ViewMode>("grid");
-  const [sortMode, setSortMode] = useState<SortMode>("alpha");
 
   useEffect(() => {
     if (!initialDocId) return;
@@ -636,6 +638,7 @@ export default function DocumentManagerPage() {
               : null,
           }}
           onReplaceFile={handleReplaceFile}
+          setFolders={setFolders}
         />
       </div>
 

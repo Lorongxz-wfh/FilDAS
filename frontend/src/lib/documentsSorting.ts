@@ -154,16 +154,33 @@ export function computeVisibleItems(params: {
     ...allDeptFolders.map<Item>((f) => ({ kind: "folder", data: f })),
     ...allDeptFiles.map<Item>((d) => ({ kind: "file", data: d })),
   ];
-
   globalItems = globalItems.filter((item) => {
     if (item.kind === "file") {
       const d = item.data as DocumentRow;
+
       const name = (d.title || d.original_filename || "").toLowerCase();
-      return name.includes(q);
+      const description = (d.description || "").toLowerCase();
+
+      const tagNames = Array.isArray((d as any).tags)
+        ? ((d as any).tags as any[])
+            .map((t) => (t.name || "").toLowerCase())
+            .join(" ")
+        : "";
+
+      const haystack = `${name} ${description} ${tagNames}`;
+
+      return haystack.includes(q);
     }
-    const name = (item.data as any).name.toLowerCase();
-    return name.includes(q);
+
+    // folders and departments
+    const data = item.data as any;
+    const name = (data.name || "").toLowerCase();
+    const description = (data.description || "").toLowerCase();
+    const haystack = `${name} ${description}`;
+
+    return haystack.includes(q);
   });
+
 
   globalItems = globalItems.filter((item, index, self) => {
     const id = (item.data as any).id;

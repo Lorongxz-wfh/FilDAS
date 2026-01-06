@@ -13,12 +13,14 @@ type Params = {
   isSuperAdmin: boolean;
   userDepartmentId: number | null;
   initialDepartmentId?: number | null;
+  schoolYearFilter?: string; // optional, "" means all
 };
 
 export function useDocumentNavigation({
   isSuperAdmin,
   userDepartmentId,
   initialDepartmentId = null,
+  schoolYearFilter = "",
 }: Params) {
 
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -57,7 +59,11 @@ export function useDocumentNavigation({
           params: { department_id: dept.id, parent_id: null },
         }),
         api.get("/documents", {
-          params: { department_id: dept.id, folder_id: null },
+          params: {
+            department_id: dept.id,
+            folder_id: null,
+            school_year: schoolYearFilter || undefined,
+          },
         }),
       ]);
       const fs: FolderRow[] = folderRes.data.data ?? folderRes.data;
@@ -98,7 +104,11 @@ export function useDocumentNavigation({
           params: { department_id: folder.department_id, parent_id: folder.id },
         }),
         api.get("/documents", {
-          params: { department_id: folder.department_id, folder_id: folder.id },
+          params: {
+            department_id: folder.department_id,
+            folder_id: folder.id,
+            school_year: schoolYearFilter || undefined,
+          },
         }),
       ]);
       const childFolders: FolderRow[] = folderRes.data.data ?? folderRes.data;

@@ -29,6 +29,7 @@ type Props = {
   onResizeStart?: () => void;
   currentUser: CurrentUser | null;
   onReplaceFile?: (docId: number, file: File) => Promise<any> | any;
+  setFolders?: (updater: (prev: FolderRow[]) => FolderRow[]) => void;
 };
 
 type ShareRecord = {
@@ -74,6 +75,7 @@ export function DetailsPanel({
   onResizeStart,
   currentUser,
   onReplaceFile,
+  setFolders,
 }: Props) {
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<
@@ -242,7 +244,14 @@ export function DetailsPanel({
             ) : isFolder ? (
               <FolderDetails
                 folder={selectedItem.data as FolderRow}
-                onDescriptionSaved={onAccessChanged}
+                onFolderUpdated={(updated) => {
+                  if (!setFolders) return;
+                  setFolders((prev) =>
+                    prev.map((f) =>
+                      f.id === updated.id ? { ...f, ...updated } : f
+                    )
+                  );
+                }}
               />
             ) : (
               <DepartmentDetails selectedItem={selectedItem} />
