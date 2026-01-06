@@ -129,6 +129,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/documents/{document}/comments', [CommentController::class, 'indexForDocument']);
     Route::post('/documents/{document}/comments', [CommentController::class, 'storeForDocument']);
 
+    // Tags for a document
+    Route::post('/documents/{document}/tags', [DocumentController::class, 'syncTags']);
+    Route::delete('/documents/{document}/tags/{tag}', [DocumentController::class, 'detachTag']);
+
     // Sharing
     Route::get('/shares', [ShareController::class, 'index']);
     Route::get('/items/{type}/{id}/shares', [ShareController::class, 'itemShares']);
@@ -140,4 +144,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/notifications', [NotificationController::class, 'index']);
     Route::post('/notifications/{id}/read', [NotificationController::class, 'markAsRead']);
     Route::post('/notifications/read-all', [NotificationController::class, 'markAllAsRead']);
+
+    // Tag autocomplete
+    Route::get('/tags', [DocumentController::class, 'listTags']);
 });

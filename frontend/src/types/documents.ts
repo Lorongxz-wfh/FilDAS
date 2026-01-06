@@ -1,5 +1,11 @@
 // src/types/documents.ts
 
+export type Tag = {
+  id: number;
+  name: string;
+  color?: string | null;
+};
+
 export type DocumentRow = {
   id: number;
   title: string | null;
@@ -33,6 +39,10 @@ export type DocumentRow = {
   uploadedBy?: { id: number; name: string; email: string };  // NEW
   owner?: { id: number; name: string; email: string };  // NEW
   department?: { id: number; name: string };  // NEW
+
+  // New metadata
+  school_year?: string | null;
+  tags?: Tag[];
 };
 
 export type FolderRow = {

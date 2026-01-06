@@ -9,6 +9,7 @@ use App\Models\DocumentVersion;
 use App\Models\Share;
 use App\Models\Activity;
 use App\Helpers\ActivityLogger;
+use App\Models\Tag;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
@@ -45,7 +46,7 @@ class DocumentController extends Controller
     public function index(Request $request)
     {
         $user  = $request->user();
-        $query = Document::with(['folder', 'uploadedBy', 'owner'])
+        $query = Document::with(['folder', 'uploadedBy', 'owner', 'tags'])
             ->notTrashed(); // exclude trashed docs by default
 
         $this->applyCommonDocumentFilters($query, $request);
@@ -110,7 +111,7 @@ class DocumentController extends Controller
     {
         $user = $request->user();
 
-        $query = Document::with(['folder', 'uploadedBy', 'owner', 'department'])
+        $query = Document::with(['folder', 'uploadedBy', 'owner', 'department', 'tags'])
             ->trashed();
 
         if ($request->has('department_id')) {
@@ -298,12 +299,12 @@ class DocumentController extends Controller
             }
         }
 
-        return response()->json($document->load('folder', 'uploadedBy', 'owner'), 201);
+        return response()->json($document->load('folder', 'uploadedBy', 'owner', 'tags'), 201);
     }
 
     public function show(Document $document)
     {
-        return response()->json($document->load(['folder', 'uploadedBy', 'owner']));
+        return response()->json($document->load(['folder', 'uploadedBy', 'owner', 'tags']));
     }
 
     // List all versions for a document (latest last)
@@ -443,18 +444,20 @@ class DocumentController extends Controller
         }
 
         return response()->json(
-            $document->load('folder', 'uploadedBy', 'owner'),
+            $document->load('folder', 'uploadedBy', 'owner', 'tags'),
             200
         );
     }
 
     public function update(Request $request, Document $document)
     {
+
         $validated = $request->validate([
             'title'       => 'sometimes|string|max:255',
             'description' => 'nullable|string',
             'folder_id'   => 'sometimes|exists:folders,id',
             'owner_id'    => 'sometimes|nullable|exists:users,id',
+            'school_year' => 'sometimes|nullable|string|max:9',
         ]);
 
         $user = $request->user();
@@ -516,7 +519,7 @@ class DocumentController extends Controller
             ));
         }
 
-        return response()->json($document->load(['folder', 'uploadedBy', 'owner']));
+        return response()->json($document->load(['folder', 'uploadedBy', 'owner', 'tags']));
     }
 
     // Replace the underlying file and create a new version entry
@@ -622,7 +625,7 @@ class DocumentController extends Controller
         }
 
         return response()->json(
-            $document->load('folder', 'uploadedBy', 'owner'),
+            $document->load('folder', 'uploadedBy', 'owner', 'tags'),
             200
         );
     }
@@ -1245,7 +1248,7 @@ class DocumentController extends Controller
         $deptId = $request->get('department_id');
         $search = $request->get('q');
 
-        $query = Document::with(['department', 'uploadedBy', 'owner', 'approvedBy', 'assignedTo'])
+        $query = Document::with(['department', 'uploadedBy', 'owner', 'approvedBy', 'assignedTo', 'tags'])
             ->notTrashed();
 
         if ($status !== 'all') {
@@ -1410,5 +1413,86 @@ class DocumentController extends Controller
             });
 
         return response()->json($activities);
+    }
+
+    // Sync tags for a document (limited number)
+    public function syncTags(Request $request, Document $document)
+    {
+        $user = $request->user();
+
+        // Reuse your permission logic: only editors/owners can change tags
+        $effectivePerm = $this->getEffectivePermissionForUser($document, $user);
+        $isOwner = (int) $document->owner_id === (int) $user->id
+            || (int) $document->uploaded_by === (int) $user->id;
+
+        if ($effectivePerm === 'viewer' || ($effectivePerm === 'contributor' && !$isOwner)) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        $data = $request->validate([
+            'tags'   => 'array',
+            'tags.*' => 'string|max:32',
+        ]);
+
+        $names = collect($data['tags'])
+            ->map(fn($name) => strtolower(trim($name)))
+            ->filter()
+            ->unique()
+            ->values();
+
+        // Limit tags per document to avoid abuse
+        if ($names->count() > 10) {
+            return response()->json(['error' => 'Too many tags (max 10).'], 422);
+        }
+
+        // Find or create tags
+        $tagIds = [];
+        foreach ($names as $name) {
+            $tag = Tag::firstOrCreate(['name' => $name]);
+            $tagIds[] = $tag->id;
+        }
+
+        $document->tags()->sync($tagIds);
+
+        return response()->json(
+            $document->fresh(['folder', 'uploadedBy', 'owner', 'tags']),
+            200
+        );
+    }
+
+    // Detach a single tag from document
+    public function detachTag(Request $request, Document $document, Tag $tag)
+    {
+        $user = $request->user();
+
+        $effectivePerm = $this->getEffectivePermissionForUser($document, $user);
+        $isOwner = (int) $document->owner_id === (int) $user->id
+            || (int) $document->uploaded_by === (int) $user->id;
+
+        if ($effectivePerm === 'viewer' || ($effectivePerm === 'contributor' && !$isOwner)) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        $document->tags()->detach($tag->id);
+
+        return response()->json(
+            $document->fresh(['folder', 'uploadedBy', 'owner', 'tags']),
+            200
+        );
+    }
+
+    public function listTags(Request $request)
+    {
+        $q = (string) $request->query('q', '');
+
+        $query = Tag::query()->orderBy('name');
+
+        if ($q !== '') {
+            $query->where('name', 'like', '%' . strtolower(trim($q)) . '%');
+        }
+
+        $tags = $query->limit(50)->get(['id', 'name', 'color']);
+
+        return response()->json($tags);
     }
 }

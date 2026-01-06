@@ -31,6 +31,7 @@ class Document extends Model
         'approved_by',
         'assigned_to',
         'approved_at',
+        'school_year',
     ];
 
     protected $casts = [
@@ -45,6 +46,11 @@ class Document extends Model
     public function department()
     {
         return $this->belongsTo(Department::class);
+    }
+
+    public function tags()
+    {
+        return $this->belongsToMany(Tag::class, 'document_tag');
     }
 
     public function uploadedBy()

@@ -87,9 +87,36 @@ export function FileDetails({
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [versionsError, setVersionsError] = useState<string | null>(null);
 
+  const [schoolYear, setSchoolYear] = useState<string | null>(
+    (doc as any).school_year || null
+  );
+  const [savingSchoolYear, setSavingSchoolYear] = useState(false);
+
+  const [tags, setTags] = useState<string[]>(
+    Array.isArray((doc as any).tags)
+      ? (doc as any).tags.map((t: any) => t.name)
+      : []
+  );
+  const [newTag, setNewTag] = useState("");
+  const [savingTags, setSavingTags] = useState(false);
+
+  const currentYear = new Date().getFullYear();
+  const schoolYearOptions: string[] = [];
+  for (let start = 2022; start <= currentYear + 2; start++) {
+    const end = start + 1;
+    schoolYearOptions.push(`${start}-${end}`);
+  }
+
   useEffect(() => {
     setDescription(doc.description || "");
     setEditingDescription(false);
+
+    setSchoolYear((doc as any).school_year || null);
+    setTags(
+      Array.isArray((doc as any).tags)
+        ? (doc as any).tags.map((t: any) => t.name)
+        : []
+    );
 
     const loadQaHistory = async () => {
       setQaHistoryLoading(true);
@@ -157,6 +184,79 @@ export function FileDetails({
     } finally {
       setReplacing(false);
     }
+  };
+
+  const handleSaveSchoolYear = async (value: string | null) => {
+    setSavingSchoolYear(true);
+    try {
+      await api.patch(`/documents/${doc.id}`, {
+        school_year: value,
+      });
+      (doc as any).school_year = value;
+      setSchoolYear(value);
+      if (onDescriptionSaved) {
+        await onDescriptionSaved();
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Failed to save school year.");
+    } finally {
+      setSavingSchoolYear(false);
+    }
+  };
+
+  const syncTags = async (nextTags: string[]) => {
+    if (!doc || !(doc as any).id) {
+      console.error("Cannot sync tags: document id is missing", doc);
+      return;
+    }
+
+    const docId = (doc as any).id as number;
+
+    setSavingTags(true);
+    try {
+      const res = await api.post<DocumentRow>(`/documents/${docId}/tags`, {
+        tags: nextTags,
+      });
+      const updated = res.data as any;
+      setTags(
+        Array.isArray(updated.tags) ? updated.tags.map((t: any) => t.name) : []
+      );
+      (doc as any).tags = updated.tags;
+
+      // ask parent to reload current context + details
+      if (onReloadCurrent) {
+        await onReloadCurrent();
+      } else if (onDescriptionSaved) {
+        await onDescriptionSaved();
+      }
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.response?.data?.error || "Failed to update tags.");
+    } finally {
+      setSavingTags(false);
+    }
+  };
+
+  const handleAddTag = async () => {
+    const trimmed = newTag.trim().toLowerCase();
+    if (!trimmed) return;
+    if (tags.includes(trimmed)) {
+      setNewTag("");
+      return;
+    }
+    const nextTags = [...tags, trimmed];
+    if (nextTags.length > 10) {
+      alert("Maximum of 10 tags per document.");
+      return;
+    }
+    setNewTag("");
+    await syncTags(nextTags);
+  };
+
+  const handleRemoveTag = async (name: string) => {
+    const nextTags = tags.filter((t) => t !== name);
+    await syncTags(nextTags);
   };
 
   const handleRevertVersion = async (versionNumber: number) => {
@@ -337,6 +437,29 @@ export function FileDetails({
           </div>
         )}
 
+        {/* School year */}
+        <div className="mt-2 flex items-center justify-between text-[11px]">
+          <span className="text-slate-500">School year:</span>
+          <div className="flex items-center gap-1">
+            <select
+              className="rounded-md border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-[11px] text-slate-200"
+              value={schoolYear || ""}
+              onChange={(e) => {
+                const value = e.target.value || null;
+                void handleSaveSchoolYear(value);
+              }}
+              disabled={savingSchoolYear}
+            >
+              <option value="">None</option>
+              {schoolYearOptions.map((sy) => (
+                <option key={sy} value={sy}>
+                  {sy}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
         {onReplaceFile && (
           <div className="pt-2">
             <button
@@ -435,6 +558,58 @@ export function FileDetails({
               </div>
             ))
           )}
+        </div>
+      </div>
+
+      <div className="mb-3 border-t border-slate-800 pt-2">
+        <p className="mb-1 text-[11px] font-semibold uppercase text-slate-400">
+          Tags
+        </p>
+        <div className="mb-2 flex flex-wrap gap-1">
+          {tags.length === 0 ? (
+            <span className="text-[11px] text-slate-500">No tags yet.</span>
+          ) : (
+            tags.map((name) => (
+              <span
+                key={name}
+                className="inline-flex items-center gap-1 rounded-full bg-slate-800 px-2 py-0.5 text-[11px] text-slate-100"
+              >
+                {name}
+                <button
+                  type="button"
+                  className="text-[11px] text-slate-400 hover:text-rose-400"
+                  onClick={() => void handleRemoveTag(name)}
+                  disabled={savingTags}
+                >
+                  ×
+                </button>
+              </span>
+            ))
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            className="flex-1 rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+            placeholder="Add tag (press Enter)"
+            value={newTag}
+            onChange={(e) => setNewTag(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void handleAddTag();
+              }
+            }}
+            disabled={savingTags}
+          />
+          <button
+            type="button"
+            className="rounded-md border border-slate-700 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-800 disabled:opacity-60"
+            onClick={() => void handleAddTag()}
+            disabled={savingTags || !newTag.trim()}
+          >
+            {savingTags ? "Saving..." : "Add"}
+          </button>
         </div>
       </div>
 
